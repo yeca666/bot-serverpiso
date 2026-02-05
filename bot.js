@@ -12,15 +12,14 @@ const client = new Nodeactyl.NodeactylClient(host, key);
 const mainMenu = {
     reply_markup: {
         inline_keyboard: [
-            [{ text: '📊 Estado y Control', callback_data: 'status' }],
-            [{ text: '👤 Mi Perfil', callback_data: 'login' }],
-            [{ text: '🔄 Actualizar Menú', callback_data: 'main_menu' }]
+            [{ text: '📊 Ver y Controlar Servidores', callback_data: 'status' }],
+            [{ text: '👤 Mi Perfil', callback_data: 'login' }]
         ]
     }
 };
 
 bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id, "👋 Panel Xeon Activo.\nSelecciona una opción:", mainMenu);
+    bot.sendMessage(msg.chat.id, "👋 **Panel Xeon v2**\n¿Qué servidor quieres gestionar?", { parse_mode: 'Markdown', ...mainMenu });
 });
 
 bot.on('callback_query', async (query) => {
@@ -28,79 +27,71 @@ bot.on('callback_query', async (query) => {
     const messageId = query.message.message_id;
     const data = query.data;
 
-    // --- ACCIÓN: VOLVER AL MENÚ ---
-    if (data === 'main_menu') {
-        bot.editMessageText("👋 Menú Principal de Xeon.\n¿Qué deseas hacer?", {
-            chat_id: chatId, message_id: messageId, reply_markup: mainMenu.reply_markup
-        });
-    }
-
-    // --- ACCIÓN: MOSTRAR SERVIDORES ---
     if (data === 'status') {
-        bot.answerCallbackQuery(query.id, { text: "Cargando servidores..." });
-        await mostrarServidoresControl(chatId, messageId);
+        bot.answerCallbackQuery(query.id);
+        await mostrarControlIndividual(chatId);
     }
 
-    // --- ACCIÓN: PERFIL ---
     if (data === 'login') {
         client.getAccountDetails().then(value => {
-            bot.editMessageText(`👤 **Perfil**\nUsuario: ${value.username}\nEmail: ${value.email}`, {
-                chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: mainMenu.reply_markup
-            });
+            bot.sendMessage(chatId, `👤 **Perfil**\nUsuario: ${value.username}\nEmail: ${value.email}`, mainMenu);
         });
     }
 
-    // --- ACCIÓN: ENVIAR COMANDO DE ENERGÍA ---
-    // El formato será: "power_start_id", "power_stop_id", etc.
+    // --- CORRECCIÓN DE ENERGÍA ---
     if (data.startsWith('pwr_')) {
         const [_, action, srvId] = data.split('_');
-        bot.answerCallbackQuery(query.id, { text: `Enviando señal: ${action}...` });
+        bot.answerCallbackQuery(query.id, { text: `Enviando ${action}...` });
         
         try {
-            await client.sendServerSignal(srvId, action);
-            bot.sendMessage(chatId, `✅ Señal **${action.toUpperCase()}** enviada con éxito al servidor \`${srvId}\`.`, { parse_mode: 'Markdown' });
-            // Refrescamos el estado después de 2 segundos para ver el cambio
-            setTimeout(() => mostrarServidoresControl(chatId, messageId), 2000);
+            // La función correcta en Nodeactyl es postServerAction
+            await client.postServerAction(srvId, action);
+            bot.sendMessage(chatId, `✅ Servidor \`${srvId}\`: Señal **${action.toUpperCase()}** enviada.`, { parse_mode: 'Markdown' });
         } catch (err) {
-            bot.sendMessage(chatId, "❌ Error al enviar señal: " + err);
+            bot.sendMessage(chatId, "❌ Error: Asegúrate de que la API Key tenga permisos de control.");
         }
     }
 });
 
-async function mostrarServidoresControl(chatId, messageId) {
+async function mostrarControlIndividual(chatId) {
     try {
         const response = await client.getAllServers();
         const servers = Array.isArray(response) ? response : (response.data || []);
         
-        let texto = "🎮 **Control de Servidores**\nHaz clic en los botones para gestionar la energía:\n\n";
-        let botones = [];
-
         for (const server of servers) {
             const name = server.attributes ? server.attributes.name : server.name;
             const id = server.attributes ? server.attributes.identifier : server.identifier;
             
-            // Añadimos info al texto
-            texto += `🖥 **${name}** (\`${id}\`)\n\n`;
-            
-            // Creamos una fila de botones por cada servidor
-            botones.push([
-                { text: `▶️ Start`, callback_data: `pwr_start_${id}` },
-                { text: `⏹ Stop`, callback_data: `pwr_stop_${id}` },
-                { text: `🔄 Reset`, callback_data: `pwr_restart_${id}` }
-            ]);
+            // Consultamos stats para cada uno
+            try {
+                const stats = await client.getServerUsages(id);
+                const ramMB = (stats.resources.memory_bytes / 1024 / 1024).toFixed(2);
+                let estado = stats.current_state === 'running' ? '✅ Encendido' : '🛑 Apagado';
+
+                const mensaje = `🖥 **Servidor:** ${name}\n` +
+                                `🆔 ID: \`${id}\`\n` +
+                                `📊 Estado: ${estado}\n` +
+                                `📟 RAM: ${ramMB} MB`;
+
+                const botones = {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                { text: '▶️ Start', callback_data: `pwr_start_${id}` },
+                                { text: '⏹ Stop', callback_data: `pwr_stop_${id}` },
+                                { text: '🔄 Reset', callback_data: `pwr_restart_${id}` }
+                            ]
+                        ]
+                    }
+                };
+
+                bot.sendMessage(chatId, mensaje, { parse_mode: 'Markdown', ...botones });
+            } catch (e) {
+                bot.sendMessage(chatId, `🖥 **${name}**\n⚠️ No se pudo obtener el estado real.`);
+            }
         }
-
-        botones.push([{ text: '⬅️ Volver', callback_data: 'main_menu' }]);
-
-        bot.editMessageText(texto, {
-            chat_id: chatId,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: botones }
-        });
-
     } catch (error) {
-        bot.sendMessage(chatId, "❌ Error: " + error.message);
+        bot.sendMessage(chatId, "❌ Error al listar: " + error.message);
     }
 }
 
