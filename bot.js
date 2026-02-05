@@ -9,80 +9,100 @@ const key = process.env.key;
 const bot = new TelegramBot(token, { polling: true });
 const client = new Nodeactyl.NodeactylClient(host, key);
 
-// --- MENU PRINCIPAL ---
 const mainMenu = {
     reply_markup: {
         inline_keyboard: [
-            [
-                { text: '📊 Estado Servidores', callback_data: 'status' },
-                { text: '👤 Mi Perfil', callback_data: 'login' }
-            ],
-            [
-                { text: '🔄 Actualizar', callback_data: 'status' }
-            ]
+            [{ text: '📊 Estado y Control', callback_data: 'status' }],
+            [{ text: '👤 Mi Perfil', callback_data: 'login' }],
+            [{ text: '🔄 Actualizar Menú', callback_data: 'main_menu' }]
         ]
     }
 };
 
 bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id, "👋 ¡Hola! Bienvenido al panel de control Xeon.\n¿Qué deseas hacer hoy?", mainMenu);
+    bot.sendMessage(msg.chat.id, "👋 Panel Xeon Activo.\nSelecciona una opción:", mainMenu);
 });
 
-// --- MANEJADOR DE CLICKS EN BOTONES ---
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
-    const action = query.data;
+    const messageId = query.message.message_id;
+    const data = query.data;
 
-    if (action === 'status') {
-        bot.answerCallbackQuery(query.id, { text: "Consultando servidores..." });
-        await mostrarStatus(chatId);
-    } 
-    
-    if (action === 'login') {
-        bot.answerCallbackQuery(query.id, { text: "Cargando perfil..." });
+    // --- ACCIÓN: VOLVER AL MENÚ ---
+    if (data === 'main_menu') {
+        bot.editMessageText("👋 Menú Principal de Xeon.\n¿Qué deseas hacer?", {
+            chat_id: chatId, message_id: messageId, reply_markup: mainMenu.reply_markup
+        });
+    }
+
+    // --- ACCIÓN: MOSTRAR SERVIDORES ---
+    if (data === 'status') {
+        bot.answerCallbackQuery(query.id, { text: "Cargando servidores..." });
+        await mostrarServidoresControl(chatId, messageId);
+    }
+
+    // --- ACCIÓN: PERFIL ---
+    if (data === 'login') {
         client.getAccountDetails().then(value => {
-            bot.sendMessage(chatId, `👤 Usuario: ${value.username}\n📧 Email: ${value.email}`, mainMenu);
-        }).catch(err => bot.sendMessage(chatId, "❌ Error: " + err));
+            bot.editMessageText(`👤 **Perfil**\nUsuario: ${value.username}\nEmail: ${value.email}`, {
+                chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: mainMenu.reply_markup
+            });
+        });
+    }
+
+    // --- ACCIÓN: ENVIAR COMANDO DE ENERGÍA ---
+    // El formato será: "power_start_id", "power_stop_id", etc.
+    if (data.startsWith('pwr_')) {
+        const [_, action, srvId] = data.split('_');
+        bot.answerCallbackQuery(query.id, { text: `Enviando señal: ${action}...` });
+        
+        try {
+            await client.sendServerSignal(srvId, action);
+            bot.sendMessage(chatId, `✅ Señal **${action.toUpperCase()}** enviada con éxito al servidor \`${srvId}\`.`, { parse_mode: 'Markdown' });
+            // Refrescamos el estado después de 2 segundos para ver el cambio
+            setTimeout(() => mostrarServidoresControl(chatId, messageId), 2000);
+        } catch (err) {
+            bot.sendMessage(chatId, "❌ Error al enviar señal: " + err);
+        }
     }
 });
 
-// --- FUNCIÓN DE STATUS (Separada para poder llamarla desde el botón) ---
-async function mostrarStatus(chatId) {
+async function mostrarServidoresControl(chatId, messageId) {
     try {
         const response = await client.getAllServers();
         const servers = Array.isArray(response) ? response : (response.data || []);
         
-        if (servers.length === 0) {
-            return bot.sendMessage(chatId, "No se encontraron servidores.", mainMenu);
-        }
+        let texto = "🎮 **Control de Servidores**\nHaz clic en los botones para gestionar la energía:\n\n";
+        let botones = [];
 
         for (const server of servers) {
             const name = server.attributes ? server.attributes.name : server.name;
             const id = server.attributes ? server.attributes.identifier : server.identifier;
-
-            try {
-                const stats = await client.getServerUsages(id);
-                const ramMB = (stats.resources.memory_bytes / 1024 / 1024).toFixed(2);
-                const cpu = stats.resources.cpu_absolute.toFixed(2);
-                let estado = stats.current_state === 'running' ? '✅ Encendido' : '🛑 Apagado';
-
-                const mensaje = `🖥 **Servidor:** ${name}\n` +
-                                `📊 **Estado:** ${estado}\n` +
-                                `📉 **CPU:** ${cpu}%\n` +
-                                `📟 **RAM:** ${ramMB} MB`;
-
-                bot.sendMessage(chatId, mensaje, { parse_mode: 'Markdown' });
-            } catch (err) {
-                bot.sendMessage(chatId, `🖥 **Servidor:** ${name}\n⚠️ Sin datos.`);
-            }
+            
+            // Añadimos info al texto
+            texto += `🖥 **${name}** (\`${id}\`)\n\n`;
+            
+            // Creamos una fila de botones por cada servidor
+            botones.push([
+                { text: `▶️ Start`, callback_data: `pwr_start_${id}` },
+                { text: `⏹ Stop`, callback_data: `pwr_stop_${id}` },
+                { text: `🔄 Reset`, callback_data: `pwr_restart_${id}` }
+            ]);
         }
-        // Volvemos a enviar el menú al final
-        bot.sendMessage(chatId, "¿Deseas algo más?", mainMenu);
+
+        botones.push([{ text: '⬅️ Volver', callback_data: 'main_menu' }]);
+
+        bot.editMessageText(texto, {
+            chat_id: chatId,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: botones }
+        });
+
     } catch (error) {
-        bot.sendMessage(chatId, "❌ Error: " + error.message, mainMenu);
+        bot.sendMessage(chatId, "❌ Error: " + error.message);
     }
 }
 
-// Servidor de apoyo para Render
 const server = http.createServer((req, res) => { res.writeHead(200); res.end('Running'); });
 server.listen(process.env.PORT || 8080);
