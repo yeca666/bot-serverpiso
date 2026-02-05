@@ -1,42 +1,59 @@
 const TelegramBot = require('node-telegram-bot-api');
 const Nodeactyl = require('nodeactyl');
 
-/* USAMOS LAS VARIABLES DE RENDER */
 const token = process.env.token;
-const host = process.env.host; // Tu IP: http://92.185.36.177
-const key = process.env.key;   // Tu API Key: ptlc_...
+const host = process.env.host;
+const key = process.env.key;
 
-const bot = new TelegramBot(token, {
-	polling: true
-});
+const bot = new TelegramBot(token, { polling: true });
+const client = new Nodeactyl.NodeactylClient(host, key);
 
 bot.setMyCommands([
-	{
-		command: '/start',
-		description: 'Iniciar el bot'
-	},
-	{
-		command: '/login',
-		description: 'Ver mis datos del panel'
-	}
+    { command: '/start', description: 'Iniciar el bot' },
+    { command: '/login', description: 'Ver mi perfil' },
+    { command: '/status', description: 'Estado de mis servidores' }
 ]);
 
 bot.onText(/\/start/, (msg) => {
-	const chatId = msg.chat.id;
-	bot.sendMessage(chatId, "♥️ ¡Hola! Estoy listo para gestionar tu panel Xeon.\n\nEscribe /login para probar la conexión.");
+    bot.sendMessage(msg.chat.id, "♥️ Bot conectado. Usa /status para ver tus servidores.");
 });
 
-/* COMANDO LOGIN MODIFICADO */
 bot.onText(/\/login/, (msg) => {
-	const chatId = msg.chat.id;
-	let first = msg.from.first_name;
+    client.getAccountDetails().then(value => {
+        bot.sendMessage(msg.chat.id, `👤 Usuario: ${value.username}\n📧 Email: ${value.email}`);
+    }).catch(err => bot.sendMessage(msg.chat.id, "❌ Error: " + err));
+});
 
-	// Usamos la URL (host) y la Key que configuramos en Render
-	let client = new Nodeactyl.NodeactylClient(host, key); 
-	
-	client.getAccountDetails().then(function (value) {
-		bot.sendMessage(chatId, `✅ Conexión exitosa, ${first}!\n\n👤 Usuario: ${value.username}\n🆔 ID: ${value.id}\n📧 Email: ${value.email}`);
-	}, function (reason) {
-		bot.sendMessage(chatId, "❌ Error de conexión: " + reason);
-	});
+// NUEVO COMANDO: /status
+bot.onText(/\/status/, async (msg) => {
+    const chatId = msg.chat.id;
+    bot.sendMessage(chatId, "🔍 Consultando servidores...");
+
+    try {
+        const servers = await client.getAllServers();
+        
+        if (servers.length === 0) {
+            return bot.sendMessage(chatId, "No tienes servidores en tu cuenta.");
+        }
+
+        for (const server of servers) {
+            const stats = await client.getServerUsages(server.identifier);
+            
+            // Convertimos bytes a MB para que se entienda mejor
+            const ramMB = (stats.resources.memory_bytes / 1024 / 1024).toFixed(2);
+            const cpu = stats.resources.cpu_absolute.toFixed(2);
+            
+            let estado = stats.current_state === 'running' ? '✅ Encendido' : '🛑 Apagado';
+            
+            const mensaje = `🖥 **Servidor:** ${server.name}\n` +
+                            `🆔 **ID:** \`${server.identifier}\`\n` +
+                            `📊 **Estado:** ${estado}\n` +
+                            `📉 **CPU:** ${cpu}%\n` +
+                            `📟 **RAM:** ${ramMB} MB`;
+
+            bot.sendMessage(chatId, mensaje, { parse_mode: 'Markdown' });
+        }
+    } catch (error) {
+        bot.sendMessage(chatId, "❌ Error al obtener servidores: " + error);
+    }
 });
