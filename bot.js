@@ -1,27 +1,22 @@
 const TelegramBot = require('node-telegram-bot-api');
 const Nodeactyl = require('nodeactyl');
 const http = require('http');
+// Importación de fetch para hacer la petición tipo "curl"
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const token = process.env.token;
-const host = process.env.host;
+const host = process.env.host; // Debe ser http://92.185.36.177
 const key = process.env.key;
 
 const bot = new TelegramBot(token, { polling: true });
 const client = new Nodeactyl.NodeactylClient(host, key);
 
-const mainMenu = {
-    reply_markup: {
-        inline_keyboard: [
-            [{ text: '📊 Ver y Controlar Servidores', callback_data: 'status' }],
-            [{ text: '👤 Mi Perfil', callback_data: 'login' }]
-        ]
-    }
-};
-
 bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id, "👋 **Panel Xeon v2**\n¿Qué servidor quieres gestionar?", { 
-        parse_mode: 'Markdown', 
-        reply_markup: mainMenu.reply_markup 
+    bot.sendMessage(msg.chat.id, "👋 **Panel Xeon v2**\nGestión de servidores activada.", {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [[{ text: '📊 Ver y Controlar Servidores', callback_data: 'status' }]]
+        }
     });
 });
 
@@ -31,78 +26,65 @@ bot.on('callback_query', async (query) => {
 
     if (data === 'status') {
         bot.answerCallbackQuery(query.id);
-        await mostrarControlIndividual(chatId);
-    }
-
-    if (data === 'login') {
-        bot.answerCallbackQuery(query.id);
-        client.getAccountDetails().then(value => {
-            bot.sendMessage(chatId, `👤 **Perfil**\nUsuario: ${value.username}\nEmail: ${value.email}`, mainMenu);
-        });
+        await mostrarServidores(chatId);
     }
 
     if (data.startsWith('pwr_')) {
         const [_, action, srvId] = data.split('_');
-        bot.answerCallbackQuery(query.id, { text: `Enviando ${action}...` });
+        bot.answerCallbackQuery(query.id, { text: `Ejecutando ${action}...` });
+        
+        // Esta es la URL exacta que te funcionó en la consola
+        const url = `${host}/api/client/servers/${srvId}/power`;
         
         try {
-            // 🛡️ RED DE SEGURIDAD: Probamos los nombres de función conocidos
-            if (typeof client.sendServerAction === 'function') {
-                await client.sendServerAction(srvId, action);
-            } else if (typeof client.postServerAction === 'function') {
-                await client.postServerAction(srvId, action);
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${key}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({ signal: action })
+            });
+
+            // 204 es el código de éxito que devuelve Pterodactyl
+            if (response.status === 204 || response.ok) {
+                bot.sendMessage(chatId, `✅ Servidor \`${srvId}\`:\nSeñal **${action.toUpperCase()}** enviada.`);
             } else {
-                await client.sendServerSignal(srvId, action);
+                const errorData = await response.json().catch(() => ({}));
+                const detail = errorData.errors ? errorData.errors[0].detail : "Error desconocido";
+                bot.sendMessage(chatId, `❌ Error del Panel: ${detail}`);
             }
-            
-            bot.sendMessage(chatId, `✅ Servidor \`${srvId}\`: Señal **${action.toUpperCase()}** enviada.`, { parse_mode: 'Markdown' });
         } catch (err) {
-            bot.sendMessage(chatId, `❌ **Error del Panel**: ${err.message || "Acceso denegado"}`);
+            bot.sendMessage(chatId, `❌ Error de conexión: ${err.message}`);
         }
     }
 });
 
-async function mostrarControlIndividual(chatId) {
+async function mostrarServidores(chatId) {
     try {
         const response = await client.getAllServers();
         const servers = Array.isArray(response) ? response : (response.data || []);
         
         for (const server of servers) {
-            const name = server.attributes ? server.attributes.name : server.name;
-            const id = server.attributes ? server.attributes.identifier : server.identifier;
+            const name = server.attributes.name;
+            const id = server.attributes.identifier; // Aquí pillará 3b2ee24a, etc.
             
-            try {
-                const stats = await client.getServerUsages(id);
-                const ramMB = (stats.resources.memory_bytes / 1024 / 1024).toFixed(2);
-                const cpu = stats.resources.cpu_absolute.toFixed(2);
-                let estado = stats.current_state === 'running' ? '✅ Encendido' : '🛑 Apagado';
-
-                const mensaje = `🖥 **Servidor:** ${name}\n🆔 ID: \`${id}\`\n📊 Estado: ${estado}\n📉 CPU: ${cpu}%\n📟 RAM: ${ramMB} MB`;
-                const botones = {
-                    reply_markup: {
-                        inline_keyboard: [[
-                            { text: '▶️ Start', callback_data: `pwr_start_${id}` },
-                            { text: '⏹ Stop', callback_data: `pwr_stop_${id}` },
-                            { text: '🔄 Reset', callback_data: `pwr_restart_${id}` }
-                        ]]
-                    }
-                };
-                bot.sendMessage(chatId, mensaje, { parse_mode: 'Markdown', ...botones });
-            } catch (e) {
-                bot.sendMessage(chatId, `🖥 **${name}** (\`${id}\`)\n⚠️ No se pudieron obtener estadísticas actuales.`, {
-                    reply_markup: {
-                        inline_keyboard: [[
-                            { text: '▶️ Start', callback_data: `pwr_start_${id}` },
-                            { text: '⏹ Stop', callback_data: `pwr_stop_${id}` }
-                        ]]
-                    }
-                });
-            }
+            const mensaje = `🖥 **Servidor:** ${name}\n🆔 ID: \`${id}\``;
+            const botones = {
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: '▶️ Start', callback_data: `pwr_start_${id}` },
+                        { text: '⏹ Stop', callback_data: `pwr_stop_${id}` },
+                        { text: '🔄 Reset', callback_data: `pwr_restart_${id}` }
+                    ]]
+                }
+            };
+            bot.sendMessage(chatId, mensaje, { parse_mode: 'Markdown', ...botones });
         }
     } catch (error) {
-        bot.sendMessage(chatId, "❌ Error al conectar: " + error.message);
+        bot.sendMessage(chatId, "❌ Error al listar: " + error.message);
     }
 }
 
-const server = http.createServer((req, res) => { res.writeHead(200); res.end('Running'); });
-server.listen(process.env.PORT || 8080);
+http.createServer((req, res) => { res.end('OK'); }).listen(process.env.PORT || 8080);
