@@ -1,11 +1,5 @@
-{
-  "name": "node-pterodactyl-bot",
-  "version": "1.0.0",
-  "main": "bot.js",
-  "license": "Apache 2.0",
-  "author": "spelsinx",
-  "dependencies": {
+"dependencies": {
     "nodeactyl": "^3.2.2",
-    "node-telegram-bot-api": "^0.51.0"
+    "node-telegram-bot-api": "^0.51.0",
+    "node-fetch": "^2.6.7"
   }
-}
