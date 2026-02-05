@@ -4,6 +4,9 @@
   "main": "bot.js",
   "license": "Apache 2.0",
   "author": "spelsinx",
+  "scripts": {
+    "start": "node bot.js"
+  },
   "dependencies": {
     "nodeactyl": "^3.2.2",
     "node-telegram-bot-api": "^0.61.0",
