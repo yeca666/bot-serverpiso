@@ -1,5 +1,6 @@
 const TelegramBot = require('node-telegram-bot-api');
 const Nodeactyl = require('nodeactyl');
+const http = require('http');
 
 const token = process.env.token;
 const host = process.env.host;
@@ -8,40 +9,54 @@ const key = process.env.key;
 const bot = new TelegramBot(token, { polling: true });
 const client = new Nodeactyl.NodeactylClient(host, key);
 
-bot.setMyCommands([
-    { command: '/start', description: 'Iniciar el bot' },
-    { command: '/login', description: 'Ver mi perfil' },
-    { command: '/status', description: 'Estado de mis servidores' }
-]);
+// --- MENU PRINCIPAL ---
+const mainMenu = {
+    reply_markup: {
+        inline_keyboard: [
+            [
+                { text: '📊 Estado Servidores', callback_data: 'status' },
+                { text: '👤 Mi Perfil', callback_data: 'login' }
+            ],
+            [
+                { text: '🔄 Actualizar', callback_data: 'status' }
+            ]
+        ]
+    }
+};
 
 bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id, "♥️ Bot conectado. Usa /status para ver tus servidores.");
+    bot.sendMessage(msg.chat.id, "👋 ¡Hola! Bienvenido al panel de control Xeon.\n¿Qué deseas hacer hoy?", mainMenu);
 });
 
-bot.onText(/\/login/, (msg) => {
-    client.getAccountDetails().then(value => {
-        bot.sendMessage(msg.chat.id, `👤 Usuario: ${value.username}\n📧 Email: ${value.email}`);
-    }).catch(err => bot.sendMessage(msg.chat.id, "❌ Error: " + err));
+// --- MANEJADOR DE CLICKS EN BOTONES ---
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const action = query.data;
+
+    if (action === 'status') {
+        bot.answerCallbackQuery(query.id, { text: "Consultando servidores..." });
+        await mostrarStatus(chatId);
+    } 
+    
+    if (action === 'login') {
+        bot.answerCallbackQuery(query.id, { text: "Cargando perfil..." });
+        client.getAccountDetails().then(value => {
+            bot.sendMessage(chatId, `👤 Usuario: ${value.username}\n📧 Email: ${value.email}`, mainMenu);
+        }).catch(err => bot.sendMessage(chatId, "❌ Error: " + err));
+    }
 });
 
-// NUEVO COMANDO: /status
-bot.onText(/\/status/, async (msg) => {
-    const chatId = msg.chat.id;
-    bot.sendMessage(chatId, "🔍 Consultando servidores...");
-
+// --- FUNCIÓN DE STATUS (Separada para poder llamarla desde el botón) ---
+async function mostrarStatus(chatId) {
     try {
-        // Obtenemos los servidores
         const response = await client.getAllServers();
-        
-        // El truco: Si no es una lista directa, buscamos dentro de 'data'
         const servers = Array.isArray(response) ? response : (response.data || []);
         
         if (servers.length === 0) {
-            return bot.sendMessage(chatId, "No se encontraron servidores en tu cuenta.");
+            return bot.sendMessage(chatId, "No se encontraron servidores.", mainMenu);
         }
 
         for (const server of servers) {
-            // Sacamos los datos básicos del servidor
             const name = server.attributes ? server.attributes.name : server.name;
             const id = server.attributes ? server.attributes.identifier : server.identifier;
 
@@ -52,31 +67,22 @@ bot.onText(/\/status/, async (msg) => {
                 let estado = stats.current_state === 'running' ? '✅ Encendido' : '🛑 Apagado';
 
                 const mensaje = `🖥 **Servidor:** ${name}\n` +
-                                `🆔 **ID:** \`${id}\`\n` +
                                 `📊 **Estado:** ${estado}\n` +
                                 `📉 **CPU:** ${cpu}%\n` +
                                 `📟 **RAM:** ${ramMB} MB`;
 
                 bot.sendMessage(chatId, mensaje, { parse_mode: 'Markdown' });
             } catch (err) {
-                bot.sendMessage(chatId, `🖥 **Servidor:** ${name}\n⚠️ No pude obtener estadísticas detalladas.`);
+                bot.sendMessage(chatId, `🖥 **Servidor:** ${name}\n⚠️ Sin datos.`);
             }
         }
+        // Volvemos a enviar el menú al final
+        bot.sendMessage(chatId, "¿Deseas algo más?", mainMenu);
     } catch (error) {
-        console.error(error);
-        bot.sendMessage(chatId, "❌ Error al conectar con el panel: " + error.message);
+        bot.sendMessage(chatId, "❌ Error: " + error.message, mainMenu);
     }
-});
+}
 
-// Mini servidor para que Render no dé error de puerto
-const http = require('http');
-const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Bot is running\n');
-});
-
-const PORT = process.env.PORT || 8080;
-server.listen(PORT, () => {
-    console.log(`✅ Servidor web de apoyo escuchando en el puerto ${PORT}`);
-});
-
+// Servidor de apoyo para Render
+const server = http.createServer((req, res) => { res.writeHead(200); res.end('Running'); });
+server.listen(process.env.PORT || 8080);
