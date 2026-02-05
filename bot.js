@@ -57,3 +57,15 @@ bot.onText(/\/status/, async (msg) => {
         bot.sendMessage(chatId, "❌ Error al obtener servidores: " + error);
     }
 });
+
+// Mini servidor para que Render no dé error de puerto
+const http = require('http');
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot is running\n');
+});
+
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+    console.log(`✅ Servidor web de apoyo escuchando en el puerto ${PORT}`);
+});
