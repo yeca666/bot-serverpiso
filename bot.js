@@ -1,22 +1,29 @@
 const TelegramBot = require('node-telegram-bot-api');
 const Nodeactyl = require('nodeactyl');
 const http = require('http');
-// Importación de fetch para hacer la petición tipo "curl"
+// Importación de fetch para realizar la acción de energía (lo que validamos por SSH)
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const token = process.env.token;
-const host = process.env.host; // Debe ser http://92.185.36.177
+const host = process.env.host; 
 const key = process.env.key;
 
 const bot = new TelegramBot(token, { polling: true });
 const client = new Nodeactyl.NodeactylClient(host, key);
 
+// Menú principal
+const mainMenu = {
+    reply_markup: {
+        inline_keyboard: [
+            [{ text: '📊 Ver y Controlar Servidores', callback_data: 'status' }]
+        ]
+    }
+};
+
 bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id, "👋 **Panel Xeon v2**\nGestión de servidores activada.", {
+    bot.sendMessage(msg.chat.id, "👋 **Panel Xeon v2**\nGestión de servidores lista.", {
         parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [[{ text: '📊 Ver y Controlar Servidores', callback_data: 'status' }]]
-        }
+        reply_markup: mainMenu.reply_markup
     });
 });
 
@@ -25,15 +32,15 @@ bot.on('callback_query', async (query) => {
     const data = query.data;
 
     if (data === 'status') {
-        bot.answerCallbackQuery(query.id);
+        bot.answerCallbackQuery(query.id, { text: "Consultando servidores..." });
         await mostrarServidores(chatId);
     }
 
+    // LÓGICA DE CONTROL DE ENERGÍA (ESTILO SSH)
     if (data.startsWith('pwr_')) {
         const [_, action, srvId] = data.split('_');
-        bot.answerCallbackQuery(query.id, { text: `Ejecutando ${action}...` });
+        bot.answerCallbackQuery(query.id, { text: `Enviando ${action}...` });
         
-        // Esta es la URL exacta que te funcionó en la consola
         const url = `${host}/api/client/servers/${srvId}/power`;
         
         try {
@@ -47,12 +54,11 @@ bot.on('callback_query', async (query) => {
                 body: JSON.stringify({ signal: action })
             });
 
-            // 204 es el código de éxito que devuelve Pterodactyl
             if (response.status === 204 || response.ok) {
-                bot.sendMessage(chatId, `✅ Servidor \`${srvId}\`:\nSeñal **${action.toUpperCase()}** enviada.`);
+                bot.sendMessage(chatId, `✅ Servidor \`${srvId}\`:\nSeñal **${action.toUpperCase()}** enviada con éxito.`);
             } else {
                 const errorData = await response.json().catch(() => ({}));
-                const detail = errorData.errors ? errorData.errors[0].detail : "Error desconocido";
+                const detail = errorData.errors ? errorData.errors[0].detail : "Error en la petición";
                 bot.sendMessage(chatId, `❌ Error del Panel: ${detail}`);
             }
         } catch (err) {
@@ -68,9 +74,19 @@ async function mostrarServidores(chatId) {
         
         for (const server of servers) {
             const name = server.attributes.name;
-            const id = server.attributes.identifier; // Aquí pillará 3b2ee24a, etc.
+            const id = server.attributes.identifier;
             
-            const mensaje = `🖥 **Servidor:** ${name}\n🆔 ID: \`${id}\``;
+            let estadoIcono = '⚪️';
+            
+            try {
+                // Obtenemos el estado actual para poner el círculo de color
+                const stats = await client.getServerUsages(id);
+                estadoIcono = stats.current_state === 'running' ? '🟢' : '🔴';
+            } catch (e) {
+                estadoIcono = '⚠️'; // Por si el servidor está en error o instalando
+            }
+            
+            const mensaje = `${estadoIcono} **Servidor:** ${name}\n🆔 ID: \`${id}\``;
             const botones = {
                 reply_markup: {
                     inline_keyboard: [[
@@ -87,4 +103,5 @@ async function mostrarServidores(chatId) {
     }
 }
 
-http.createServer((req, res) => { res.end('OK'); }).listen(process.env.PORT || 8080);
+// Mantenemos el servidor vivo para Render
+http.createServer((req, res) => { res.writeHead(200); res.end('OK'); }).listen(process.env.PORT || 8080);
