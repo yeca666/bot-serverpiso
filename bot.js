@@ -30,31 +30,41 @@ bot.onText(/\/status/, async (msg) => {
     bot.sendMessage(chatId, "🔍 Consultando servidores...");
 
     try {
-        const servers = await client.getAllServers();
+        // Obtenemos los servidores
+        const response = await client.getAllServers();
+        
+        // El truco: Si no es una lista directa, buscamos dentro de 'data'
+        const servers = Array.isArray(response) ? response : (response.data || []);
         
         if (servers.length === 0) {
-            return bot.sendMessage(chatId, "No tienes servidores en tu cuenta.");
+            return bot.sendMessage(chatId, "No se encontraron servidores en tu cuenta.");
         }
 
         for (const server of servers) {
-            const stats = await client.getServerUsages(server.identifier);
-            
-            // Convertimos bytes a MB para que se entienda mejor
-            const ramMB = (stats.resources.memory_bytes / 1024 / 1024).toFixed(2);
-            const cpu = stats.resources.cpu_absolute.toFixed(2);
-            
-            let estado = stats.current_state === 'running' ? '✅ Encendido' : '🛑 Apagado';
-            
-            const mensaje = `🖥 **Servidor:** ${server.name}\n` +
-                            `🆔 **ID:** \`${server.identifier}\`\n` +
-                            `📊 **Estado:** ${estado}\n` +
-                            `📉 **CPU:** ${cpu}%\n` +
-                            `📟 **RAM:** ${ramMB} MB`;
+            // Sacamos los datos básicos del servidor
+            const name = server.attributes ? server.attributes.name : server.name;
+            const id = server.attributes ? server.attributes.identifier : server.identifier;
 
-            bot.sendMessage(chatId, mensaje, { parse_mode: 'Markdown' });
+            try {
+                const stats = await client.getServerUsages(id);
+                const ramMB = (stats.resources.memory_bytes / 1024 / 1024).toFixed(2);
+                const cpu = stats.resources.cpu_absolute.toFixed(2);
+                let estado = stats.current_state === 'running' ? '✅ Encendido' : '🛑 Apagado';
+
+                const mensaje = `🖥 **Servidor:** ${name}\n` +
+                                `🆔 **ID:** \`${id}\`\n` +
+                                `📊 **Estado:** ${estado}\n` +
+                                `📉 **CPU:** ${cpu}%\n` +
+                                `📟 **RAM:** ${ramMB} MB`;
+
+                bot.sendMessage(chatId, mensaje, { parse_mode: 'Markdown' });
+            } catch (err) {
+                bot.sendMessage(chatId, `🖥 **Servidor:** ${name}\n⚠️ No pude obtener estadísticas detalladas.`);
+            }
         }
     } catch (error) {
-        bot.sendMessage(chatId, "❌ Error al obtener servidores: " + error);
+        console.error(error);
+        bot.sendMessage(chatId, "❌ Error al conectar con el panel: " + error.message);
     }
 });
 
@@ -69,3 +79,4 @@ const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
     console.log(`✅ Servidor web de apoyo escuchando en el puerto ${PORT}`);
 });
+
