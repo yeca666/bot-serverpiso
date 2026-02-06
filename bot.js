@@ -1,24 +1,25 @@
 const TelegramBot = require('node-telegram-bot-api');
-const { Client } = require('ssh2'); 
+const { Client } = require('ssh2');
+const Nodeactyl = require('nodeactyl');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
-// --- CONFIGURACIÓN ---
 const token = process.env.token;
-const host = process.env.host; 
+const host = process.env.host;
 const key = process.env.key;
-const sshUser = process.env.ssh_user; 
+const sshUser = process.env.ssh_user;
 const sshPass = process.env.ssh_pass;
 const sshHost = '92.185.36.177';
 
 const bot = new TelegramBot(token, { polling: true });
+const client = new Nodeactyl.NodeactylClient(host, key);
 
-// --- FUNCIÓN SSH (Hardware Real) ---
+// --- ESTA ES LA FUNCIÓN NUEVA QUE NO DEBE ROMPER NADA ---
 function getHardwareStats() {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
         const conn = new Client();
         conn.on('ready', () => {
             conn.exec("sensors && free -m", (err, stream) => {
-                if (err) return reject(err);
+                if (err) return resolve({ cpuTemp: "??", gpuTemp: "??", ramUsed: "??", ramTotal: "??" });
                 let output = '';
                 stream.on('data', (d) => output += d).on('close', () => {
                     const tempMatch = output.match(/Package id 0:\s+\+([\d.]+)/);
@@ -33,50 +34,32 @@ function getHardwareStats() {
                     conn.end();
                 });
             });
-        }).on('error', (err) => reject(err))
-          .connect({ host: sshHost, port: 2222, username: sshUser, password: sshPass, readyTimeout: 20000 });
+        }).on('error', () => resolve({ cpuTemp: "Error", gpuTemp: "Error", ramUsed: "Error", ramTotal: "Error" }))
+          .connect({ host: sshHost, port: 2222, username: sshUser, password: sshPass, readyTimeout: 10000 });
     });
 }
 
-// --- COMANDO /START ---
+// --- COMANDO START (COMO EL ORIGINAL) ---
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     
-    // 1. Aviso de carga (notificación pequeña)
-    const loadingMsg = await bot.sendMessage(chatId, "⏳ Conectando al servidor, espera...");
+    // Mensaje temporal de carga
+    const waitMsg = await bot.sendMessage(chatId, "⏳ Conectando al servidor, espera...");
 
     try {
-        // 2. Obtener Hardware por SSH
         const hw = await getHardwareStats();
+        const servers = await client.getAllServers();
+        
+        // Borramos el "espera"
+        bot.deleteMessage(chatId, waitMsg.message_id);
 
-        // 3. Obtener Lista de Servidores desde Pterodactyl API
-        const response = await fetch(`${host}/api/client`, {
-            method: 'GET',
-            headers: { 
-                'Authorization': `Bearer ${key}`, 
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            }
-        });
-        const data = await response.json();
-        const servers = data.data; // Aquí están todos tus servidores
+        const buttons = servers.map(s => [
+            { text: `▶️ Start ${s.name}`, callback_data: `pwr_start_${s.identifier}` },
+            { text: `🔄 Restart ${s.name}`, callback_data: `pwr_restart_${s.identifier}` },
+            { text: `⏹ Stop ${s.name}`, callback_data: `pwr_stop_${s.identifier}` }
+        ]);
 
-        // 4. Borrar mensaje de espera
-        bot.deleteMessage(chatId, loadingMsg.message_id);
-
-        // 5. Crear botones dinámicos para cada servidor
-        const inline_keyboard = [];
-        servers.forEach(s => {
-            const srv = s.attributes;
-            // Añadimos una fila de botones por cada servidor encontrado
-            inline_keyboard.push([
-                { text: `▶️ ${srv.name} (Start)`, callback_data: `pwr_start_${srv.identifier}` },
-                { text: `🔄 Reset`, callback_data: `pwr_restart_${srv.identifier}` },
-                { text: `⏹ Stop`, callback_data: `pwr_stop_${srv.identifier}` }
-            ]);
-        });
-
-        const panel = `🖥 **HOST MONITOR: Intel i5-6400**\n` +
+        const texto = `🖥 **HOST MONITOR: Intel i5-6400**\n` +
                       `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n` +
                       `🌡 **CPU Temp:** \`${hw.cpuTemp}°C\`\n` +
                       `🎮 **GPU Temp:** \`${hw.gpuTemp}°C\`\n` +
@@ -84,60 +67,33 @@ bot.onText(/\/start/, async (msg) => {
                       `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n` +
                       `_Hardware: MSI B150M BAZOOKA_`;
 
-        bot.sendMessage(chatId, panel, {
+        bot.sendMessage(chatId, texto, {
             parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: inline_keyboard }
+            reply_markup: { inline_keyboard: buttons }
         });
-
-    } catch (err) {
-        console.error(err);
-        bot.sendMessage(chatId, "❌ Error al cargar datos: " + err.message);
+    } catch (e) {
+        bot.sendMessage(chatId, "❌ Error al cargar servidores.");
     }
 });
 
-// --- ACCIONES DE BOTONES ---
+// --- ACCIONES (COMO LAS ORIGINALES) ---
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
-    const messageId = query.message.message_id;
-    const [_, action, srvId] = query.data.split('_');
+    const data = query.data.split('_');
+    const action = data[1];
+    const srvId = data[2];
 
     if (query.data.startsWith('pwr_')) {
-        bot.answerCallbackQuery(query.id, { text: `Enviando ${action}...` });
-
+        bot.answerCallbackQuery(query.id, { text: "Procesando..." });
         try {
             await fetch(`${host}/api/client/servers/${srvId}/power`, {
                 method: 'POST',
-                headers: { 
-                    'Authorization': `Bearer ${key}`, 
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                },
+                headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ signal: action })
             });
-
-            // Actualizamos la temperatura después de la acción
-            const hw = await getHardwareStats();
-            
-            bot.editMessageText(
-                `🖥 **HOST MONITOR: Intel i5-6400**\n` +
-                `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n` +
-                `✅ Acción \`${action.toUpperCase()}\` enviada.\n\n` +
-                `🌡 **CPU Temp:** \`${hw.cpuTemp}°C\`\n` +
-                `🎮 **GPU Temp:** \`${hw.gpuTemp}°C\`\n` +
-                `📟 **RAM Global:** \`${hw.ramUsed}MB / ${hw.ramTotal}MB\`\n` +
-                `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n` +
-                `_Hardware: MSI B150M BAZOOKA_`,
-                { 
-                    chat_id: chatId, 
-                    message_id: messageId, 
-                    parse_mode: 'Markdown', 
-                    reply_markup: query.message.reply_markup 
-                }
-            );
-        } catch (err) {
-            bot.sendMessage(chatId, "❌ Error en Pterodactyl: " + err.message);
+            bot.sendMessage(chatId, `✅ Acción ${action} enviada al servidor ${srvId}`);
+        } catch (e) {
+            bot.sendMessage(chatId, "❌ Error al enviar señal.");
         }
     }
 });
-
-console.log("Bot iniciado con éxito...");
