@@ -39,7 +39,7 @@ function getHardwareStats() {
                     conn.end();
                 });
             });
-        }).connect({ host: sshHost, port: 22, username: sshUser, password: sshPass });
+        }).connect({ host: sshHost, port: 3333, username: sshUser, password: sshPass });
     });
 }
 
@@ -79,3 +79,4 @@ bot.on('callback_query', async (query) => {
         }
     }
 });
+
