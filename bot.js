@@ -1,7 +1,6 @@
 const TelegramBot = require('node-telegram-bot-api');
 const Nodeactyl = require('nodeactyl');
 const http = require('http');
-// Importación de fetch para realizar la acción de energía (lo que validamos por SSH)
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const token = process.env.token;
@@ -11,7 +10,6 @@ const key = process.env.key;
 const bot = new TelegramBot(token, { polling: true });
 const client = new Nodeactyl.NodeactylClient(host, key);
 
-// Menú principal
 const mainMenu = {
     reply_markup: {
         inline_keyboard: [
@@ -36,7 +34,6 @@ bot.on('callback_query', async (query) => {
         await mostrarServidores(chatId);
     }
 
-    // LÓGICA DE CONTROL DE ENERGÍA (ESTILO SSH)
     if (data.startsWith('pwr_')) {
         const [_, action, srvId] = data.split('_');
         bot.answerCallbackQuery(query.id, { text: `Enviando ${action}...` });
@@ -44,6 +41,11 @@ bot.on('callback_query', async (query) => {
         const url = `${host}/api/client/servers/${srvId}/power`;
         
         try {
+            // Intentamos obtener el nombre del servidor antes de enviar la señal
+            // para que la respuesta sea más bonita
+            const srvInfo = await client.getServerDetails(srvId);
+            const serverName = srvInfo.name || srvId;
+
             const response = await fetch(url, {
                 method: 'POST',
                 headers: {
@@ -55,14 +57,15 @@ bot.on('callback_query', async (query) => {
             });
 
             if (response.status === 204 || response.ok) {
-                bot.sendMessage(chatId, `✅ Servidor \`${srvId}\`:\nSeñal **${action.toUpperCase()}** enviada con éxito.`);
+                // CAMBIO AQUÍ: Ahora usa serverName en lugar de srvId
+                bot.sendMessage(chatId, `✅ Servidor: **${serverName}**\nSeñal **${action.toUpperCase()}** enviada con éxito.`, { parse_mode: 'Markdown' });
             } else {
                 const errorData = await response.json().catch(() => ({}));
                 const detail = errorData.errors ? errorData.errors[0].detail : "Error en la petición";
                 bot.sendMessage(chatId, `❌ Error del Panel: ${detail}`);
             }
         } catch (err) {
-            bot.sendMessage(chatId, `❌ Error de conexión: ${err.message}`);
+            bot.sendMessage(chatId, `❌ Error: ${err.message}`);
         }
     }
 });
@@ -79,11 +82,10 @@ async function mostrarServidores(chatId) {
             let estadoIcono = '⚪️';
             
             try {
-                // Obtenemos el estado actual para poner el círculo de color
                 const stats = await client.getServerUsages(id);
                 estadoIcono = stats.current_state === 'running' ? '🟢' : '🔴';
             } catch (e) {
-                estadoIcono = '⚠️'; // Por si el servidor está en error o instalando
+                estadoIcono = '⚠️'; 
             }
             
             const mensaje = `${estadoIcono} **Servidor:** ${name}\n🆔 ID: \`${id}\``;
@@ -103,5 +105,4 @@ async function mostrarServidores(chatId) {
     }
 }
 
-// Mantenemos el servidor vivo para Render
 http.createServer((req, res) => { res.writeHead(200); res.end('OK'); }).listen(process.env.PORT || 8080);
