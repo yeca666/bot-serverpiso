@@ -60,7 +60,7 @@ function getHardwareStats() {
             reject(err);
         }).connect({ 
             host: sshHost, 
-            port: 3333, // El puerto que abriste en el router
+            port: 2222, // El puerto que abriste en el router
             username: sshUser, 
             password: sshPass,
             readyTimeout: 10000 
@@ -133,3 +133,4 @@ bot.on('callback_query', async (query) => {
         }
     }
 });
+
