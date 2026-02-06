@@ -10,12 +10,12 @@ const sshUser = process.env.ssh_user;
 const sshPass = process.env.ssh_pass;
 const sshHost = '92.185.36.177';
 
-const ADMIN_PASSWORD = "adminpiso423"; // La contraseña que pedirá el bot
-let awaitingAuth = {}; // Aquí guardaremos quién ha pulsado el botón y qué quería hacer
+const ADMIN_PASSWORD = "adminpiso423"; 
+let awaitingAuth = {}; 
 
 const bot = new TelegramBot(token, { polling: true });
 
-// --- FUNCIÓN SSH (Hardware) ---
+// --- FUNCIÓN SSH (Hardware con cálculo de %) ---
 function getHardwareStats() {
     return new Promise((resolve) => {
         const conn = new Client();
@@ -27,11 +27,18 @@ function getHardwareStats() {
                     const tempMatch = output.match(/Package id 0:\s+\+([\d.]+)/);
                     const gpuMatch = output.match(/GPU core:\s+.*?temp1:\s+\+([\d.]+)/s);
                     const ramLine = output.match(/Mem:\s+(\d+)\s+(\d+)/);
+                    
+                    let ramPct = "??";
+                    if (ramLine) {
+                        const total = parseInt(ramLine[1]);
+                        const used = parseInt(ramLine[2]);
+                        ramPct = ((used / total) * 100).toFixed(1); // Un decimal para precisión
+                    }
+
                     resolve({
                         cpu: tempMatch ? tempMatch[1] : "??",
                         gpu: gpuMatch ? gpuMatch[1] : "??",
-                        ramU: ramLine ? ramLine[2] : "??",
-                        ramT: ramLine ? ramLine[1] : "??"
+                        ramP: ramPct
                     });
                     conn.end();
                 });
@@ -41,21 +48,27 @@ function getHardwareStats() {
     });
 }
 
-// --- ESCUCHA DE MENSAJES DE TEXTO (Para la contraseña) ---
-bot.on('message', (msg) => {
+// --- ESCUCHA DE MENSAJES DE TEXTO (Contraseña y Limpieza) ---
+bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
 
-    // Si este usuario había pulsado un botón de sistema hace poco...
     if (awaitingAuth[chatId]) {
+        const { action, panelId, promptId } = awaitingAuth[chatId];
+
         if (text === ADMIN_PASSWORD) {
-            const action = awaitingAuth[chatId];
-            delete awaitingAuth[chatId]; // Limpiar estado
+            bot.sendMessage(chatId, `✅ Código aceptado. Ejecutando ${action}...`);
             
-            bot.sendMessage(chatId, `✅ Contraseña correcta. Ejecutando ${action}...`);
+            try {
+                await bot.deleteMessage(chatId, panelId);
+                await bot.deleteMessage(chatId, promptId);
+                await bot.deleteMessage(chatId, msg.message_id); 
+            } catch (e) { console.log("Error al limpiar chat"); }
+
+            delete awaitingAuth[chatId];
             ejecutarComandoSistema(chatId, action);
         } else {
-            delete awaitingAuth[chatId]; // Si falla, cancelamos el proceso por seguridad
+            delete awaitingAuth[chatId];
             bot.sendMessage(chatId, "❌ Contraseña incorrecta. Operación cancelada.");
         }
     }
@@ -67,7 +80,7 @@ function ejecutarComandoSistema(chatId, action) {
     conn.on('ready', () => {
         conn.exec(`sudo /usr/sbin/${action}`, (err, stream) => {
             if (err) return bot.sendMessage(chatId, "❌ Error de SSH.");
-            bot.sendMessage(chatId, `⚠️ Servidor físico ${action === 'reboot' ? 'reiniciándose' : 'apagándose'}...`);
+            bot.sendMessage(chatId, `💀 **HOST ${action.toUpperCase()}**\n_Cerrando conexión._`);
             setTimeout(() => conn.end(), 2000);
         });
     }).connect({ host: sshHost, port: 2222, username: sshUser, password: sshPass });
@@ -76,7 +89,7 @@ function ejecutarComandoSistema(chatId, action) {
 // --- COMANDO /START ---
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
-    const loading = await bot.sendMessage(chatId, "⏳ Conectando...");
+    const loading = await bot.sendMessage(chatId, "⏳ Obteniendo estado del Host...");
 
     try {
         const res = await fetch(`${host}/api/client`, {
@@ -94,17 +107,16 @@ bot.onText(/\/start/, async (msg) => {
             { text: `⏹ Stop`, callback_data: `pwr_stop_${s.attributes.identifier}` }
         ]);
 
-        // Botones de sistema (Ahora visibles para todos)
         keyboard.push([
             { text: "🛰️ Reiniciar Host", callback_data: "sys_reboot" },
             { text: "💀 APAGAR HOST", callback_data: "sys_poweroff" }
         ]);
 
         const statsTexto = hw 
-            ? `🌡 **CPU:** \`${hw.cpu}°C\`  🎮 **GPU:** \`${hw.gpu}°C\`\n📟 **RAM:** \`${hw.ramU}MB / ${hw.ramT}MB\``
+            ? `🌡 **CPU:** \`${hw.cpu}°C\`  🎮 **GPU:** \`${hw.gpu}°C\`\n📟 **RAM en uso:** \`${hw.ramP}%\``
             : `⚠️ _No se pudo leer el hardware_`;
 
-        bot.sendMessage(chatId, `🖥 **HOST MONITOR**\n${statsTexto}`, {
+        await bot.sendMessage(chatId, `🖥 **HOST MONITOR: i5-6400**\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n${statsTexto}`, {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: keyboard }
         });
@@ -118,12 +130,18 @@ bot.onText(/\/start/, async (msg) => {
 bot.on('callback_query', async (query) => {
     const data = query.data;
     const chatId = query.message.chat.id;
+    const messageId = query.message.message_id;
 
     if (data.startsWith('sys_')) {
         const action = data.split('_')[1];
-        awaitingAuth[chatId] = action; // Guardamos qué quiere hacer el usuario
+        const prompt = await bot.sendMessage(chatId, `🔐 Autorización para **${action}**.\nEscribe la contraseña de admin:`);
+        
+        awaitingAuth[chatId] = { 
+            action: action, 
+            panelId: messageId, 
+            promptId: prompt.message_id 
+        };
         bot.answerCallbackQuery(query.id);
-        bot.sendMessage(chatId, `🔐 Se requiere autorización para **${action}**.\nEscribe la contraseña de administrador:`);
         return;
     }
 
