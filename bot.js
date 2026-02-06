@@ -15,7 +15,7 @@ let awaitingAuth = {};
 
 const bot = new TelegramBot(token, { polling: true });
 
-// --- FUNCIÓN SSH (Hardware con cálculo de %) ---
+// --- FUNCIÓN SSH (Hardware) ---
 function getHardwareStats() {
     return new Promise((resolve) => {
         const conn = new Client();
@@ -32,7 +32,7 @@ function getHardwareStats() {
                     if (ramLine) {
                         const total = parseInt(ramLine[1]);
                         const used = parseInt(ramLine[2]);
-                        ramPct = ((used / total) * 100).toFixed(1); // Un decimal para precisión
+                        ramPct = ((used / total) * 100).toFixed(1);
                     }
 
                     resolve({
@@ -48,7 +48,7 @@ function getHardwareStats() {
     });
 }
 
-// --- ESCUCHA DE MENSAJES DE TEXTO (Contraseña y Limpieza) ---
+// --- ESCUCHA DE MENSAJES DE TEXTO ---
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
@@ -57,19 +57,18 @@ bot.on('message', async (msg) => {
         const { action, panelId, promptId } = awaitingAuth[chatId];
 
         if (text === ADMIN_PASSWORD) {
-            bot.sendMessage(chatId, `✅ Código aceptado. Ejecutando ${action}...`);
-            
+            // En lugar de enviar mensajes nuevos, borramos todo de golpe
             try {
                 await bot.deleteMessage(chatId, panelId);
                 await bot.deleteMessage(chatId, promptId);
-                await bot.deleteMessage(chatId, msg.message_id); 
-            } catch (e) { console.log("Error al limpiar chat"); }
+                await bot.deleteMessage(chatId, msg.message_id);
+            } catch (e) { console.log("Limpieza previa fallida"); }
 
             delete awaitingAuth[chatId];
             ejecutarComandoSistema(chatId, action);
         } else {
             delete awaitingAuth[chatId];
-            bot.sendMessage(chatId, "❌ Contraseña incorrecta. Operación cancelada.");
+            bot.sendMessage(chatId, "❌ Contraseña incorrecta.");
         }
     }
 });
@@ -80,8 +79,8 @@ function ejecutarComandoSistema(chatId, action) {
     conn.on('ready', () => {
         conn.exec(`sudo /usr/sbin/${action}`, (err, stream) => {
             if (err) return bot.sendMessage(chatId, "❌ Error de SSH.");
-            bot.sendMessage(chatId, `💀 **HOST ${action.toUpperCase()}**\n_Cerrando conexión._`);
-            setTimeout(() => conn.end(), 2000);
+            // No enviamos mensaje de "Cerrando conexión" para que el chat quede vacío
+            setTimeout(() => conn.end(), 1000);
         });
     }).connect({ host: sshHost, port: 2222, username: sshUser, password: sshPass });
 }
@@ -89,7 +88,7 @@ function ejecutarComandoSistema(chatId, action) {
 // --- COMANDO /START ---
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
-    const loading = await bot.sendMessage(chatId, "⏳ Obteniendo estado del Host...");
+    const loading = await bot.sendMessage(chatId, "⏳ Obteniendo estado...");
 
     try {
         const res = await fetch(`${host}/api/client`, {
@@ -113,8 +112,8 @@ bot.onText(/\/start/, async (msg) => {
         ]);
 
         const statsTexto = hw 
-            ? `🌡 **CPU:** \`${hw.cpu}°C\`  🎮 **GPU:** \`${hw.gpu}°C\`\n📟 **RAM en uso:** \`${hw.ramP}%\``
-            : `⚠️ _No se pudo leer el hardware_`;
+            ? `🌡 **CPU:** \`${hw.cpu}°C\`  🎮 **GPU:** \`${hw.gpu}°C\`\n📟 **RAM:** \`${hw.ramP}%\``
+            : `⚠️ _Error de hardware_`;
 
         await bot.sendMessage(chatId, `🖥 **HOST MONITOR: i5-6400**\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n${statsTexto}`, {
             parse_mode: 'Markdown',
@@ -134,7 +133,7 @@ bot.on('callback_query', async (query) => {
 
     if (data.startsWith('sys_')) {
         const action = data.split('_')[1];
-        const prompt = await bot.sendMessage(chatId, `🔐 Autorización para **${action}**.\nEscribe la contraseña de admin:`);
+        const prompt = await bot.sendMessage(chatId, `🔐 Autorización para **${action}**.\nEscribe la contraseña:`);
         
         awaitingAuth[chatId] = { 
             action: action, 
