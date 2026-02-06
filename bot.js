@@ -7,6 +7,19 @@ const token = process.env.token;
 const host = process.env.host; 
 const key = process.env.key;
 
+console.log("--- INICIANDO BOT ---");
+console.log("Token detectado:", process.env.token ? "SÍ" : "NO");
+
+bot.on('polling_error', (error) => {
+    console.log("ERROR DE POLLING:", error.code); 
+});
+
+bot.getMe().then((me) => {
+    console.log("Conectado exitosamente como:", me.username);
+}).catch((err) => {
+    console.log("Fallo al conectar con Telegram:", err.message);
+});
+
 // NUEVAS VARIABLES PARA SSH (Añádelas en Northflank)
 const sshUser = process.env.ssh_user; 
 const sshPass = process.env.ssh_pass;
@@ -79,4 +92,5 @@ bot.on('callback_query', async (query) => {
         }
     }
 });
+
 
