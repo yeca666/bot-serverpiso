@@ -42,28 +42,30 @@ function getHardwareStats() {
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     
-    // 1. Mensaje de carga pequeño (como pediste)
     const loading = await bot.sendMessage(chatId, "⏳ Conectando al servidor físico...");
 
     try {
-        // 2. Obtener servidores de Pterodactyl (Método directo)
         const res = await fetch(`${host}/api/client`, {
             headers: { 'Authorization': `Bearer ${key}`, 'Accept': 'application/json' }
         });
         const data = await res.json();
         const servers = data.data;
 
-        // 3. Obtener Hardware (si falla, sigue adelante)
         const hw = await getHardwareStats();
 
-        // 4. Limpiar mensaje de carga
         bot.deleteMessage(chatId, loading.message_id);
 
-        // 5. Crear botones
+        // 1. Botones de Pterodactyl (Tus servidores de juegos)
         const keyboard = servers.map(s => [
             { text: `▶️ Start ${s.attributes.name}`, callback_data: `pwr_start_${s.attributes.identifier}` },
             { text: `🔄 Restart`, callback_data: `pwr_restart_${s.attributes.identifier}` },
             { text: `⏹ Stop`, callback_data: `pwr_stop_${s.attributes.identifier}` }
+        ]);
+
+        // 2. AÑADIMOS FILA DE SISTEMA AL FINAL
+        keyboard.push([
+            { text: "🛰️ Reiniciar Host", callback_data: "sys_reboot" },
+            { text: "💀 APAGAR HOST", callback_data: "sys_poweroff" }
         ]);
 
         const statsTexto = hw 
@@ -82,27 +84,44 @@ bot.onText(/\/start/, async (msg) => {
         });
 
     } catch (e) {
-        bot.editMessageText("❌ Error crítico: No se pudo conectar con Pterodactyl.", {
-            chat_id: chatId,
-            message_id: loading.message_id
-        });
+        bot.sendMessage(chatId, "❌ Error crítico: No se pudo conectar con Pterodactyl.");
     }
 });
 
 // --- ACCIONES DE BOTONES ---
 bot.on('callback_query', async (query) => {
-    const [_, action, srvId] = query.data.split('_');
-    if (!query.data.startsWith('pwr_')) return;
+    const data = query.data;
+    const chatId = query.message.chat.id;
 
-    bot.answerCallbackQuery(query.id, { text: `Enviando ${action}...` });
+    // LÓGICA PARA EL HOST (NUEVA)
+    if (data.startsWith('sys_')) {
+        const action = data.split('_')[1]; // reboot o poweroff
+        bot.answerCallbackQuery(query.id, { text: `Ejecutando ${action}...` });
+        
+        const conn = new Client();
+        conn.on('ready', () => {
+            conn.exec(`sudo ${action}`, (err, stream) => {
+                if (err) return bot.sendMessage(chatId, "❌ Error de SSH.");
+                bot.sendMessage(chatId, `⚠️ Orden enviada: El host se está ${action === 'reboot' ? 'reiniciando' : 'apagando'}.`);
+                conn.end();
+            });
+        }).connect({ host: sshHost, port: 2222, username: sshUser, password: sshPass });
+        return;
+    }
 
-    try {
-        await fetch(`${host}/api/client/servers/${srvId}/power`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ signal: action })
-        });
-    } catch (e) {
-        bot.sendMessage(query.message.chat.id, "❌ Error al enviar señal.");
+    // LÓGICA PARA PTERODACTYL (LA QUE YA TENÍAS)
+    if (data.startsWith('pwr_')) {
+        const [_, action, srvId] = data.split('_');
+        bot.answerCallbackQuery(query.id, { text: `Enviando ${action}...` });
+
+        try {
+            await fetch(`${host}/api/client/servers/${srvId}/power`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ signal: action })
+            });
+        } catch (e) {
+            bot.sendMessage(chatId, "❌ Error al enviar señal.");
+        }
     }
 });
