@@ -1,57 +1,81 @@
+const TelegramBot = require('node-telegram-bot-api');
+const { Client } = require('ssh2'); 
+const Nodeactyl = require('nodeactyl');
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+
+const token = process.env.token;
+const host = process.env.host; 
+const key = process.env.key;
+
+// NUEVAS VARIABLES PARA SSH (Añádelas en Northflank)
+const sshUser = process.env.ssh_user; 
+const sshPass = process.env.ssh_pass;
+const sshHost = '92.185.36.177';
+
+const bot = new TelegramBot(token, { polling: true });
+const client = new Nodeactyl.NodeactylClient(host, key);
+
+// Función mágica para leer el hardware real
+function getHardwareStats() {
+    return new Promise((resolve, reject) => {
+        const conn = new Client();
+        conn.on('ready', () => {
+            // Ejecutamos sensors y comandos de sistema para RAM global
+            conn.exec("sensors && free -m", (err, stream) => {
+                if (err) return reject(err);
+                let output = '';
+                stream.on('data', (d) => output += d).on('close', () => {
+                    // Extraemos la temperatura del Package id 0 usando Regex
+                    const tempMatch = output.match(/Package id 0:\s+\+([\d.]+)/);
+                    const gpuMatch = output.match(/GPU core:\s+.*?temp1:\s+\+([\d.]+)/s);
+                    const ramLine = output.match(/Mem:\s+(\d+)\s+(\d+)/);
+                    
+                    resolve({
+                        cpuTemp: tempMatch ? tempMatch[1] : "??",
+                        gpuTemp: gpuMatch ? gpuMatch[1] : "??",
+                        ramTotal: ramLine ? ramLine[1] : "16384",
+                        ramUsed: ramLine ? ramLine[2] : "??"
+                    });
+                    conn.end();
+                });
+            });
+        }).connect({ host: sshHost, port: 22, username: sshUser, password: sshPass });
+    });
+}
+
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
-    const messageId = query.message.message_id; // Obtenemos el ID del mensaje actual
-    const data = query.data;
+    const messageId = query.message.message_id;
+    const [_, action, srvId] = query.data.split('_');
 
-    if (data === 'status') {
-        bot.answerCallbackQuery(query.id, { text: "Consultando servidores..." });
-        await mostrarServidores(chatId);
-    }
-
-    if (data.startsWith('pwr_')) {
-        const [_, action, srvId] = data.split('_');
-        bot.answerCallbackQuery(query.id, { text: `Enviando ${action}...` });
-        
-        const url = `${host}/api/client/servers/${srvId}/power`;
+    if (query.data.startsWith('pwr_')) {
+        bot.answerCallbackQuery(query.id, { text: "Accediendo al Host..." });
         
         try {
-            const srvInfo = await client.getServerDetails(srvId);
-            const serverName = srvInfo.name || srvId;
-
-            const response = await fetch(url, {
+            // 1. Obtenemos datos del hardware real por SSH
+            const hw = await getHardwareStats();
+            
+            // 2. Enviamos la orden a Pterodactyl
+            await fetch(`${host}/api/client/servers/${srvId}/power`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${key}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                },
+                headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ signal: action })
             });
 
-            if (response.status === 204 || response.ok) {
-                // CAMBIO CLAVE: En lugar de bot.sendMessage, usamos editMessageText
-                // Esto reemplaza el texto del mensaje que tenía los botones
-                bot.editMessageText(`✅ Servidor: **${serverName}**\nSeñal **${action.toUpperCase()}** enviada con éxito.`, {
-                    chat_id: chatId,
-                    message_id: messageId,
-                    parse_mode: 'Markdown'
-                });
-
-                // Opcional: Después de 3 segundos, podrías volver a mostrar el menú,
-                // pero por ahora esto evitará que se acumulen mensajes nuevos.
-            } else {
-                const errorData = await response.json().catch(() => ({}));
-                const detail = errorData.errors ? errorData.errors[0].detail : "Error";
-                bot.editMessageText(`❌ Error en **${serverName}**: ${detail}`, {
-                    chat_id: chatId,
-                    message_id: messageId
-                });
-            }
+            // 3. Editamos el mensaje con el diseño final
+            bot.editMessageText(
+                `🖥 **HOST MONITOR: Intel i5-6400**\n` +
+                `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n` +
+                `🚀 Acción: \`${action.toUpperCase()}\` enviada.\n\n` +
+                `🌡 **CPU Temp:** \`${hw.cpuTemp}°C\`\n` +
+                `🎮 **GPU Temp:** \`${hw.gpuTemp}°C\`\n` +
+                `📟 **RAM Global:** \`${hw.ramUsed}MB / ${hw.ramTotal}MB\`\n` +
+                `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n` +
+                `_Hardware: MSI B150M BAZOOKA_`,
+                { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' }
+            );
         } catch (err) {
-            bot.editMessageText(`❌ Error de conexión: ${err.message}`, {
-                chat_id: chatId,
-                message_id: messageId
-            });
+            bot.sendMessage(chatId, "❌ Error de conexión SSH: " + err.message);
         }
     }
 });
