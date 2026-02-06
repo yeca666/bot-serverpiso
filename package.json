@@ -11,5 +11,6 @@
     "nodeactyl": "^3.2.2",
     "node-telegram-bot-api": "^0.61.0",
     "node-fetch": "^2.6.7"
+    "ssh2": "^1.15.0"
   }
 }
