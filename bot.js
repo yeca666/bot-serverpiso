@@ -10,6 +10,9 @@ const sshUser = process.env.ssh_user;
 const sshPass = process.env.ssh_pass;
 const sshHost = '92.185.36.177';
 
+const ADMIN_PASSWORD = "adminpiso423"; // La contraseña que pedirá el bot
+let awaitingAuth = {}; // Aquí guardaremos quién ha pulsado el botón y qué quería hacer
+
 const bot = new TelegramBot(token, { polling: true });
 
 // --- FUNCIÓN SSH (Hardware) ---
@@ -38,11 +41,42 @@ function getHardwareStats() {
     });
 }
 
+// --- ESCUCHA DE MENSAJES DE TEXTO (Para la contraseña) ---
+bot.on('message', (msg) => {
+    const chatId = msg.chat.id;
+    const text = msg.text;
+
+    // Si este usuario había pulsado un botón de sistema hace poco...
+    if (awaitingAuth[chatId]) {
+        if (text === ADMIN_PASSWORD) {
+            const action = awaitingAuth[chatId];
+            delete awaitingAuth[chatId]; // Limpiar estado
+            
+            bot.sendMessage(chatId, `✅ Contraseña correcta. Ejecutando ${action}...`);
+            ejecutarComandoSistema(chatId, action);
+        } else {
+            delete awaitingAuth[chatId]; // Si falla, cancelamos el proceso por seguridad
+            bot.sendMessage(chatId, "❌ Contraseña incorrecta. Operación cancelada.");
+        }
+    }
+});
+
+// --- FUNCIÓN PARA EJECUTAR SSH ---
+function ejecutarComandoSistema(chatId, action) {
+    const conn = new Client();
+    conn.on('ready', () => {
+        conn.exec(`sudo /usr/sbin/${action}`, (err, stream) => {
+            if (err) return bot.sendMessage(chatId, "❌ Error de SSH.");
+            bot.sendMessage(chatId, `⚠️ Servidor físico ${action === 'reboot' ? 'reiniciándose' : 'apagándose'}...`);
+            setTimeout(() => conn.end(), 2000);
+        });
+    }).connect({ host: sshHost, port: 2222, username: sshUser, password: sshPass });
+}
+
 // --- COMANDO /START ---
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
-    
-    const loading = await bot.sendMessage(chatId, "⏳ Conectando al servidor físico...");
+    const loading = await bot.sendMessage(chatId, "⏳ Conectando...");
 
     try {
         const res = await fetch(`${host}/api/client`, {
@@ -50,19 +84,17 @@ bot.onText(/\/start/, async (msg) => {
         });
         const data = await res.json();
         const servers = data.data;
-
         const hw = await getHardwareStats();
 
         bot.deleteMessage(chatId, loading.message_id);
 
-        // 1. Botones de Pterodactyl (Tus servidores de juegos)
         const keyboard = servers.map(s => [
             { text: `▶️ Start ${s.attributes.name}`, callback_data: `pwr_start_${s.attributes.identifier}` },
             { text: `🔄 Restart`, callback_data: `pwr_restart_${s.attributes.identifier}` },
             { text: `⏹ Stop`, callback_data: `pwr_stop_${s.attributes.identifier}` }
         ]);
 
-        // 2. AÑADIMOS FILA DE SISTEMA AL FINAL
+        // Botones de sistema (Ahora visibles para todos)
         keyboard.push([
             { text: "🛰️ Reiniciar Host", callback_data: "sys_reboot" },
             { text: "💀 APAGAR HOST", callback_data: "sys_poweroff" }
@@ -70,21 +102,15 @@ bot.onText(/\/start/, async (msg) => {
 
         const statsTexto = hw 
             ? `🌡 **CPU:** \`${hw.cpu}°C\`  🎮 **GPU:** \`${hw.gpu}°C\`\n📟 **RAM:** \`${hw.ramU}MB / ${hw.ramT}MB\``
-            : `⚠️ _No se pudo leer el hardware por SSH_`;
+            : `⚠️ _No se pudo leer el hardware_`;
 
-        const panel = `🖥 **HOST MONITOR: Intel i5-6400**\n` +
-                      `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n` +
-                      `${statsTexto}\n` +
-                      `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n` +
-                      `_Hardware: MSI B150M BAZOOKA_`;
-
-        bot.sendMessage(chatId, panel, {
+        bot.sendMessage(chatId, `🖥 **HOST MONITOR**\n${statsTexto}`, {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: keyboard }
         });
 
     } catch (e) {
-        bot.sendMessage(chatId, "❌ Error crítico: No se pudo conectar con Pterodactyl.");
+        bot.sendMessage(chatId, "❌ Error de conexión.");
     }
 });
 
@@ -93,27 +119,17 @@ bot.on('callback_query', async (query) => {
     const data = query.data;
     const chatId = query.message.chat.id;
 
-    // LÓGICA PARA EL HOST (NUEVA)
     if (data.startsWith('sys_')) {
-        const action = data.split('_')[1]; // reboot o poweroff
-        bot.answerCallbackQuery(query.id, { text: `Ejecutando ${action}...` });
-        
-        const conn = new Client();
-        conn.on('ready', () => {
-            conn.exec(`sudo ${action}`, (err, stream) => {
-                if (err) return bot.sendMessage(chatId, "❌ Error de SSH.");
-                bot.sendMessage(chatId, `⚠️ Orden enviada: El host se está ${action === 'reboot' ? 'reiniciando' : 'apagando'}.`);
-                conn.end();
-            });
-        }).connect({ host: sshHost, port: 2222, username: sshUser, password: sshPass });
+        const action = data.split('_')[1];
+        awaitingAuth[chatId] = action; // Guardamos qué quiere hacer el usuario
+        bot.answerCallbackQuery(query.id);
+        bot.sendMessage(chatId, `🔐 Se requiere autorización para **${action}**.\nEscribe la contraseña de administrador:`);
         return;
     }
 
-    // LÓGICA PARA PTERODACTYL (LA QUE YA TENÍAS)
     if (data.startsWith('pwr_')) {
         const [_, action, srvId] = data.split('_');
         bot.answerCallbackQuery(query.id, { text: `Enviando ${action}...` });
-
         try {
             await fetch(`${host}/api/client/servers/${srvId}/power`, {
                 method: 'POST',
@@ -121,7 +137,7 @@ bot.on('callback_query', async (query) => {
                 body: JSON.stringify({ signal: action })
             });
         } catch (e) {
-            bot.sendMessage(chatId, "❌ Error al enviar señal.");
+            bot.sendMessage(chatId, "❌ Error de señal.");
         }
     }
 });
