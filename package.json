@@ -1,16 +1,15 @@
 {
-  "name": "node-pterodactyl-bot",
+  "name": "bot-ptero",
   "version": "1.0.0",
+  "description": "",
   "main": "bot.js",
-  "license": "Apache 2.0",
-  "author": "spelsinx",
   "scripts": {
     "start": "node bot.js"
   },
   "dependencies": {
-    "nodeactyl": "^3.2.2",
     "node-telegram-bot-api": "^0.61.0",
-    "node-fetch": "^2.6.7"
+    "nodeactyl": "^0.9.2",
+    "node-fetch": "^2.6.7",
     "ssh2": "^1.15.0"
   }
 }
