@@ -8,7 +8,7 @@ const host = process.env.host;
 const key = process.env.key;
 const sshUser = process.env.ssh_user; 
 const sshPass = process.env.ssh_pass;
-const sshHost = '92.185.36.177';
+const sshHost = process.env.ssh_host || 'serverpiso.duckdns.org';
 const miChatId = 1102386887; // CAMBIA ESTO por tu ID real para el aviso de inicio
 
 const ADMIN_PASSWORD = "adminpiso423"; 
