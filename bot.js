@@ -9,7 +9,7 @@ const key = process.env.key;
 const sshUser = process.env.ssh_user; 
 const sshPass = process.env.ssh_pass;
 const sshHost = process.env.ssh_host || 'serverpiso.duckdns.org';
-const miChatId = 1102386887; // CAMBIA ESTO por tu ID real para el aviso de inicio
+const miChatId = 1102386887; 
 
 const ADMIN_PASSWORD = "adminpiso423"; 
 let awaitingAuth = {}; 
@@ -21,13 +21,10 @@ bot.sendMessage(miChatId, "✅ **¡SISTEMA ONLINE!** El i5-6400 está operativo.
 
 // --- FUNCIÓN PARA LIMPIAR CHAT ---
 async function limpiarHistorial(chatId, lastMsgId) {
-    // Intenta borrar los últimos 50 mensajes desde el actual hacia atrás
     for (let i = 0; i < 50; i++) {
         try {
             await bot.deleteMessage(chatId, lastMsgId - i);
-        } catch (e) {
-            // Si falla (mensaje muy viejo o ya borrado), simplemente sigue
-        }
+        } catch (e) {}
     }
 }
 
@@ -38,7 +35,7 @@ function drawBar(percentage) {
     return "[" + "⣿".repeat(dots) + "⣀".repeat(empty) + "]";
 }
 
-// --- FUNCIÓN SSH ---
+// --- FUNCIÓN SSH (ESTADÍSTICAS) ---
 function getHardwareStats() {
     return new Promise((resolve, reject) => {
         const conn = new Client();
@@ -79,15 +76,15 @@ function getHardwareStats() {
 // --- COMANDO /START ---
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
-    
-    // Primero: Limpiamos lo que haya detrás
     await limpiarHistorial(chatId, msg.message_id);
 
     const loading = await bot.sendMessage(chatId, "⏳ Sincronizando i5-6400...");
 
     try {
         const hw = await getHardwareStats();
-        const res = await fetch(`${host}/api/client`, { headers: { 'Authorization': `Bearer ${key}`, 'Accept': 'application/json' } });
+        const res = await fetch(`${host}/api/client`, { 
+            headers: { 'Authorization': `Bearer ${key}`, 'Accept': 'application/json' } 
+        });
         const data = await res.json();
         
         await bot.deleteMessage(chatId, loading.message_id);
@@ -121,11 +118,42 @@ bot.onText(/\/start/, async (msg) => {
     }
 });
 
-// --- ACCIONES DE BOTONES (Top, Speedtest, etc) ---
+// --- ACCIONES DE BOTONES DE BOTONES ---
 bot.on('callback_query', async (query) => {
     const data = query.data;
     const chatId = query.message.chat.id;
 
+    // --- ACCIONES DE PTERODACTYL (START / STOP / RESTART) ---
+    if (data.startsWith('pwr_')) {
+        const parts = data.split('_'); // ['pwr', 'start', 'identifier']
+        const action = parts[1]; 
+        const serverId = parts[2];
+
+        bot.answerCallbackQuery(query.id, { text: `Enviando orden ${action}...` });
+
+        try {
+            const res = await fetch(`${host}/api/client/servers/${serverId}/power`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${key}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({ signal: action })
+            });
+
+            if (res.ok) {
+                bot.sendMessage(chatId, `✅ Orden **${action}** enviada con éxito al servidor.`, { parse_mode: 'Markdown' });
+            } else {
+                bot.sendMessage(chatId, `❌ Error en Pterodactyl (Código: ${res.status}).`);
+            }
+        } catch (err) {
+            bot.sendMessage(chatId, `🔴 Error de conexión con Pterodactyl.`);
+        }
+        return;
+    }
+
+    // --- TOP PROCESOS ---
     if (data === 'sys_top') {
         bot.answerCallbackQuery(query.id);
         const conn = new Client();
@@ -141,6 +169,7 @@ bot.on('callback_query', async (query) => {
         return;
     }
 
+    // --- SPEEDTEST ---
     if (data === 'sys_speedtest') {
         bot.answerCallbackQuery(query.id, { text: "Ejecutando (20s)..." });
         const testingMsg = await bot.sendMessage(chatId, "🌐 Realizando Speedtest...");
@@ -157,6 +186,7 @@ bot.on('callback_query', async (query) => {
         return;
     }
 
+    // --- SISTEMA (REBOOT / POWEROFF) ---
     if (data.startsWith('sys_')) {
         const action = data.split('_')[1];
         const prompt = await bot.sendMessage(chatId, `🔐 Autorización para **${action}**.\nEscribe la contraseña:`);
@@ -166,7 +196,7 @@ bot.on('callback_query', async (query) => {
     }
 });
 
-// --- LÓGICA DE CONTRASEÑA ---
+// --- LÓGICA DE CONTRASEÑA DE SISTEMA ---
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     if (awaitingAuth[chatId] && msg.text === ADMIN_PASSWORD) {
@@ -177,9 +207,11 @@ bot.on('message', async (msg) => {
             await bot.deleteMessage(chatId, msg.message_id);
         } catch (e) {}
         delete awaitingAuth[chatId];
+        
         const conn = new Client();
         conn.on('ready', () => {
-            conn.exec(`sudo /usr/sbin/${action}`, () => setTimeout(() => conn.end(), 1000));
+            // Ejecuta 'sudo reboot' o 'sudo poweroff' de forma directa y limpia
+            conn.exec(`sudo ${action}`, () => setTimeout(() => conn.end(), 1000));
         }).connect({ host: sshHost, port: 2222, username: sshUser, password: sshPass });
     }
 });
