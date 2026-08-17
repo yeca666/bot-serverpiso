@@ -1,9 +1,6 @@
 const TelegramBot = require('node-telegram-bot-api');
 const { Client } = require('ssh2');
 
-const fetch = (...args) =>
-    import('node-fetch').then(({ default: fetch }) => fetch(...args));
-
 // ============================================================
 // CONFIGURACIÓN
 // ============================================================
@@ -19,14 +16,32 @@ const sshHost = process.env.ssh_host || 'serverpiso.duckdns.org';
 const ADMIN_PASSWORD = process.env.adminpassword;
 const GUEST_PASSWORD = process.env.guestpassword;
 
-// TeamSpeak Query
-const TS_HOST = process.env.ts_query_host || 'serverpiso.duckdns.org';
-const TS_PORT = Number(process.env.ts_query_port || 10022);
-const TS_USER = process.env.ts_query_user || 'serveradmin';
-const TS_PASS = process.env.ts_query_pass;
-const TS_API_KEY = process.env.ts_api_key;
-const TS_SERVER_ID = Number(process.env.ts_server_id || 1);
-const TS_CHANNEL_ID = Number(process.env.ts_channel_id || 1);
+// ============================================================
+// TEAMSPEAK
+// ============================================================
+
+const TS_HOST =
+    process.env.ts_query_host ||
+    'serverpiso.duckdns.org';
+
+const TS_PORT =
+    Number(process.env.ts_query_port || 10022);
+
+const TS_USER =
+    process.env.ts_query_user ||
+    'serveradmin';
+
+const TS_PASS =
+    process.env.ts_query_pass;
+
+const TS_API_KEY =
+    process.env.ts_api_key;
+
+const TS_SERVER_ID =
+    Number(process.env.ts_server_id || 1);
+
+const TS_CHANNEL_ID =
+    Number(process.env.ts_channel_id || 1);
 
 // ============================================================
 // BOT
@@ -37,7 +52,7 @@ const bot = new TelegramBot(token, {
 });
 
 // ============================================================
-// ESTADO
+// ESTADOS
 // ============================================================
 
 const authSessions = {};
@@ -50,24 +65,7 @@ const pendingActions = {};
 
 function escapeMarkdown(text) {
     return String(text)
-        .replace(/\\/g, '\\\\')
-        .replace(/_/g, '\\_')
-        .replace(/\*/g, '\\*')
-        .replace(/\[/g, '\\[')
-        .replace(/\]/g, '\\]')
-        .replace(/\(/g, '\\(')
-        .replace(/\)/g, '\\)')
-        .replace(/~/g, '\\~')
-        .replace(/>/g, '\\>')
-        .replace(/#/g, '\\#')
-        .replace(/\+/g, '\\+')
-        .replace(/-/g, '\\-')
-        .replace(/=/g, '\\=')
-        .replace(/\|/g, '\\|')
-        .replace(/{/g, '\\{')
-        .replace(/}/g, '\\}')
-        .replace(/\./g, '\\.')
-        .replace(/!/g, '\\!');
+        .replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
 }
 
 function drawBar(percentage, size = 10) {
@@ -89,11 +87,141 @@ function sleep(ms) {
 }
 
 // ============================================================
-// LIMPIAR HISTORIAL
+// QUITAR CÓDIGOS ANSI DE TEAMSPEAK
+// ============================================================
+
+function removeAnsi(text) {
+    return String(text).replace(
+        /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g,
+        ''
+    );
+}
+
+// ============================================================
+// DECODIFICAR TEAMSPEAK
+// ============================================================
+
+function decodeTs(value) {
+    if (value === undefined || value === null) {
+        return '';
+    }
+
+    const text = String(value);
+
+    let result = '';
+
+    for (let i = 0; i < text.length; i++) {
+
+        if (text[i] !== '\\') {
+            result += text[i];
+            continue;
+        }
+
+        const next = text[i + 1];
+
+        if (!next) {
+            result += '\\';
+            continue;
+        }
+
+        switch (next) {
+
+            case 's':
+                result += ' ';
+                break;
+
+            case 'p':
+                result += '|';
+                break;
+
+            case 'n':
+                result += '\n';
+                break;
+
+            case 'r':
+                result += '\r';
+                break;
+
+            case '/':
+                result += '/';
+                break;
+
+            case '\\':
+                result += '\\';
+                break;
+
+            case 'a':
+                result += '\x07';
+                break;
+
+            default:
+                result += next;
+                break;
+        }
+
+        i++;
+    }
+
+    return result;
+}
+
+// ============================================================
+// ESCAPAR TEXTO PARA TEAMSPEAK
+// ============================================================
+
+function tsEscape(text) {
+    return String(text)
+        .replace(/\\/g, '\\\\')
+        .replace(/\|/g, '\\p')
+        .replace(/\//g, '\\/')
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n')
+        .replace(/ /g, '\\s');
+}
+
+// ============================================================
+// PARSER DE TEAMSPEAK QUERY
+// ============================================================
+
+function parseTsFields(line) {
+
+    const fields = {};
+
+    /*
+     * TeamSpeak Query devuelve:
+     *
+     * targetmode=2 msg=hola\sdesde\steamspeak invokerid=10 ...
+     *
+     * NO devuelve los campos separados mediante "|".
+     *
+     * Este parser encuentra cada key=value respetando
+     * los espacios escapados como \s.
+     */
+
+    const regex =
+        /([a-zA-Z0-9_]+)=((?:\\.|[^\s])*)/g;
+
+    let match;
+
+    while ((match = regex.exec(line)) !== null) {
+
+        const key = match[1];
+        const value = match[2];
+
+        fields[key] = decodeTs(value);
+    }
+
+    return fields;
+}
+
+// ============================================================
+// LIMPIAR HISTORIAL TELEGRAM
 // ============================================================
 
 async function limpiarHistorial(chatId, lastMsgId) {
+
     for (let i = 0; i < 50; i++) {
+
         try {
             await bot.deleteMessage(
                 chatId,
@@ -128,19 +256,20 @@ function requireAdmin(chatId) {
 // ============================================================
 
 async function getGpuTemperature() {
-    return new Promise((resolve) => {
+
+    return new Promise(resolve => {
 
         const conn = new Client();
 
         conn.on('ready', () => {
 
-            const command = [
-                'if command -v nvidia-smi >/dev/null 2>&1; then',
-                'nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -n 1',
-                'else',
-                "sensors 2>/dev/null | grep -Ei 'amdgpu|nouveau|radeon|GPU|edge|junction' | head -n 5",
-                'fi'
-            ].join('\n');
+            const command = `
+if command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -n 1
+else
+    sensors 2>/dev/null | grep -Ei 'amdgpu|nouveau|radeon|GPU|edge|junction' | head -n 5
+fi
+`;
 
             conn.exec(command, (err, stream) => {
 
@@ -159,17 +288,19 @@ async function getGpuTemperature() {
 
                     conn.end();
 
-                    const nvidia = output.match(
-                        /^\s*(\d+(?:\.\d+)?)\s*$/m
-                    );
+                    const nvidia =
+                        output.match(
+                            /^\s*(\d+(?:\.\d+)?)\s*$/m
+                        );
 
                     if (nvidia) {
                         return resolve(nvidia[1]);
                     }
 
-                    const generic = output.match(
-                        /\+?(\d+(?:\.\d+)?)°?C/i
-                    );
+                    const generic =
+                        output.match(
+                            /\+?(\d+(?:\.\d+)?)°?C/i
+                        );
 
                     if (generic) {
                         return resolve(generic[1]);
@@ -206,14 +337,14 @@ function getHardwareStats() {
 
         conn.on('ready', () => {
 
-            const command = [
-                'sensors 2>/dev/null',
-                'free -m',
-                'uptime -p',
-                'df -h /',
-                'ping -c 1 -W 2 8.8.8.8',
-                'ip -h -s link'
-            ].join('; ');
+            const command = `
+sensors 2>/dev/null;
+free -m;
+uptime -p;
+df -h /;
+ping -c 1 -W 2 8.8.8.8;
+ip -h -s link
+`;
 
             conn.exec(command, (err, stream) => {
 
@@ -264,17 +395,14 @@ function getHardwareStats() {
 
                         if (ramLine) {
 
-                            const total = parseInt(
-                                ramLine[1],
-                                10
-                            );
+                            const total =
+                                parseInt(ramLine[1]);
 
-                            const used = parseInt(
-                                ramLine[2],
-                                10
-                            );
+                            const used =
+                                parseInt(ramLine[2]);
 
                             if (total > 0) {
+
                                 ramPct =
                                     ((used / total) * 100)
                                         .toFixed(1);
@@ -285,43 +413,52 @@ function getHardwareStats() {
 
                         if (uptimeMatch) {
 
-                            upTime = uptimeMatch[1]
-                                .replace(/days?/g, 'd')
-                                .replace(/hours?/g, 'h')
-                                .replace(/minutes?/g, 'm')
-                                .replace(/seconds?/g, 's')
-                                .replace(/,/g, '');
+                            upTime =
+                                uptimeMatch[1]
+                                    .replace(/days?/g, 'd')
+                                    .replace(/hours?/g, 'h')
+                                    .replace(/minutes?/g, 'm')
+                                    .replace(/seconds?/g, 's')
+                                    .replace(/,/g, '');
                         }
 
                         const gpu =
                             await getGpuTemperature();
 
                         resolve({
-                            cpu: tempMatch
-                                ? tempMatch[1]
-                                : 'N/D',
+
+                            cpu:
+                                tempMatch
+                                    ? tempMatch[1]
+                                    : 'N/D',
 
                             gpu,
 
-                            ramP: ramPct,
+                            ramP:
+                                ramPct,
 
-                            up: upTime,
+                            up:
+                                upTime,
 
-                            diskP: diskLine
-                                ? diskLine[4]
-                                : '0',
+                            diskP:
+                                diskLine
+                                    ? diskLine[4]
+                                    : '0',
 
-                            ping: pingMatch
-                                ? pingMatch[1]
-                                : 'N/D',
+                            ping:
+                                pingMatch
+                                    ? pingMatch[1]
+                                    : 'N/D',
 
-                            rx: netMatch
-                                ? netMatch[1]
-                                : 'N/D',
+                            rx:
+                                netMatch
+                                    ? netMatch[1]
+                                    : 'N/D',
 
-                            tx: netMatch
-                                ? netMatch[2]
-                                : 'N/D'
+                            tx:
+                                netMatch
+                                    ? netMatch[2]
+                                    : 'N/D'
                         });
 
                         conn.end();
@@ -366,7 +503,8 @@ async function getServers() {
         );
     }
 
-    const data = await res.json();
+    const data =
+        await res.json();
 
     return data.data || [];
 }
@@ -402,17 +540,27 @@ async function powerServer(serverId, action) {
 
 async function tsRequest(path) {
 
-    const response = await fetch(
-        `http://${TS_HOST}:10080/${TS_SERVER_ID}/${path}`,
-        {
-            headers: {
-                'x-api-key': TS_API_KEY,
-                Accept: 'application/json'
+    const url =
+        `http://${TS_HOST}:10080/${TS_SERVER_ID}/${path}`;
+
+    console.log('[TS HTTP]', url);
+
+    const response =
+        await fetch(
+            url,
+            {
+                headers: {
+                    'x-api-key':
+                        TS_API_KEY,
+
+                    Accept:
+                        'application/json'
+                }
             }
-        }
-    );
+        );
 
     if (!response.ok) {
+
         throw new Error(
             `TeamSpeak HTTP ${response.status}`
         );
@@ -422,98 +570,7 @@ async function tsRequest(path) {
 }
 
 // ============================================================
-// DECODIFICAR TEAMSpeak
-// ============================================================
-
-function decodeTs(value) {
-
-    if (!value) {
-        return '';
-    }
-
-    return String(value)
-        .replace(/\\s/g, ' ')
-        .replace(/\\p/g, '|')
-        .replace(/\\n/g, '\n')
-        .replace(/\\r/g, '\r')
-        .replace(/\\\//g, '/')
-        .replace(/\\\\/g, '\\');
-}
-
-// ============================================================
-// SPLIT TEAMSpeak
-// ============================================================
-
-function splitTsLine(line) {
-
-    const result = [];
-
-    let current = '';
-    let escaped = false;
-
-    for (let i = 0; i < line.length; i++) {
-
-        const char = line[i];
-
-        if (escaped) {
-
-            current += '\\' + char;
-            escaped = false;
-
-            continue;
-        }
-
-        if (char === '\\') {
-
-            escaped = true;
-
-            continue;
-        }
-
-        if (char === '|') {
-
-            result.push(current);
-
-            current = '';
-
-            continue;
-        }
-
-        current += char;
-    }
-
-    if (escaped) {
-        current += '\\';
-    }
-
-    result.push(current);
-
-    return result;
-}
-
-// ============================================================
-// PARSEAR TEAMSpeak
-// ============================================================
-
-function parseTsFields(line) {
-    const fields = {};
-
-    const regex = /([a-zA-Z0-9_]+)=((?:\\.|[^\s])*)/g;
-
-    let match;
-
-    while ((match = regex.exec(line)) !== null) {
-        const key = match[1];
-        const value = match[2];
-
-        fields[key] = decodeTs(value);
-    }
-
-    return fields;
-}
-
-// ============================================================
-// USUARIOS TEAMSpeak
+// OBTENER USUARIOS DE TEAMSPEAK
 // ============================================================
 
 async function getTsUsers() {
@@ -523,24 +580,39 @@ async function getTsUsers() {
         const result =
             await tsRequest('clientlist');
 
-        if (
-            result.status?.code !== 0
-        ) {
+        if (result.status?.code !== 0) {
+
+            console.error(
+                '[TS USERS] Error:',
+                result.status
+            );
+
             return [];
         }
 
-        return (result.body || [])
-            .filter(
-                client =>
+        const users =
+            (result.body || [])
+                .filter(client =>
                     String(client.client_type) === '0'
-            )
-            .filter(client =>
-                !String(
-                    client.client_nickname || ''
                 )
-                    .toLowerCase()
-                    .includes('bot')
-            );
+                .filter(client => {
+
+                    const nickname =
+                        String(
+                            client.client_nickname || ''
+                        ).toLowerCase();
+
+                    return !nickname.includes('bot');
+                });
+
+        console.log(
+            '[TS USERS] Usuarios encontrados:',
+            users.map(u =>
+                u.client_nickname
+            )
+        );
+
+        return users;
 
     } catch (e) {
 
@@ -554,90 +626,7 @@ async function getTsUsers() {
 }
 
 // ============================================================
-// ESCAPAR MENSAJES TEAMSPEAK
-// ============================================================
-
-function tsEscape(text) {
-
-    return String(text)
-        .replace(/\\/g, '\\\\')
-        .replace(/\|/g, '\\p')
-        .replace(/\//g, '\\/')
-        .replace(/\r/g, '\\r')
-        .replace(/\n/g, '\\n')
-        .replace(/ /g, '\\s');
-}
-
-// ============================================================
-// ACTUALIZAR PANEL TELEGRAM
-// ============================================================
-
-function updateChatPanel(chatId) {
-
-    const session =
-        tsChatSessions[chatId];
-
-    if (
-        !session ||
-        !session.panelId
-    ) {
-        return;
-    }
-
-    const lines =
-        session.messages.length
-            ? session.messages
-                .slice(-12)
-                .map(message =>
-                    `${message.name}: ${message.text}`
-                )
-                .join('\n')
-            : '💬 Todavía no hay mensajes nuevos.';
-
-    const text =
-        '💬 *CHAT TEAMSPEAK*\n' +
-        '━━━━━━━━━━━━━━━━━━━━\n' +
-        `${lines}\n` +
-        '━━━━━━━━━━━━━━━━━━━━\n' +
-        '✏️ Escribe un mensaje y se enviará al servidor.\n' +
-        'ℹ️ Solo se muestran mensajes recibidos desde que abriste el chat.';
-
-    const keyboard = [
-        [
-            {
-                text: '🔄 Actualizar usuarios',
-                callback_data: 'ts_chat_users'
-            }
-        ],
-        [
-            {
-                text: '🔴 Cerrar chat',
-                callback_data: 'ts_chat_close'
-            }
-        ]
-    ];
-
-    bot.editMessageText(
-        text,
-        {
-            chat_id: chatId,
-
-            message_id:
-                session.panelId,
-
-            parse_mode:
-                'Markdown',
-
-            reply_markup: {
-                inline_keyboard:
-                    keyboard
-            }
-        }
-    ).catch(() => {});
-}
-
-// ============================================================
-// CERRAR CHAT TEAMSPEAK
+// TEAMSPEAK CHAT
 // ============================================================
 
 function closeTsChat(chatId) {
@@ -648,10 +637,6 @@ function closeTsChat(chatId) {
     if (!session) {
         return;
     }
-
-    console.log(
-        `[TS CHAT] Cerrando sesión Telegram ${chatId}`
-    );
 
     try {
 
@@ -676,159 +661,89 @@ function closeTsChat(chatId) {
 }
 
 // ============================================================
-// PROCESAR EVENTO TEAMSpeak
+// ACTUALIZAR PANEL DEL CHAT
 // ============================================================
 
-function processTsLine(chatId, line) {
+function updateChatPanel(chatId) {
 
     const session =
         tsChatSessions[chatId];
 
-    if (!session) {
+    if (!session || !session.panelId) {
         return;
     }
 
-    const cleanLine =
-        line.trim();
+    const lines =
+        session.messages.length
 
-    if (!cleanLine) {
-        return;
-    }
+            ? session.messages
+                .slice(-12)
+                .map(message => {
 
-    // Ignorar respuestas normales del ServerQuery
-    if (
-        cleanLine.startsWith('error ') ||
-        cleanLine.startsWith('selected server')
-    ) {
-        console.log(
-            '[TS QUERY]',
-            cleanLine
+                    const safeName =
+                        escapeMarkdown(
+                            message.name
+                        );
+
+                    const safeText =
+                        escapeMarkdown(
+                            message.text
+                        );
+
+                    return `${safeName}: ${safeText}`;
+                })
+                .join('\n')
+
+            : '💬 Todavía no hay mensajes nuevos.';
+
+    const text =
+        `💬 *CHAT TEAMSPEAK*\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `${lines}\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `✏️ Escribe un mensaje y se enviará al servidor.\n` +
+        `ℹ️ Solo se muestran mensajes recibidos desde que abriste el chat.`;
+
+    const keyboard = [
+
+        [
+            {
+                text: '🔄 Actualizar usuarios',
+                callback_data: 'ts_chat_users'
+            }
+        ],
+
+        [
+            {
+                text: '🔴 Cerrar chat',
+                callback_data: 'ts_chat_close'
+            }
+        ]
+    ];
+
+    bot.editMessageText(
+        text,
+        {
+            chat_id: chatId,
+
+            message_id:
+                session.panelId,
+
+            parse_mode:
+                'Markdown',
+
+            reply_markup: {
+                inline_keyboard:
+                    keyboard
+            }
+        }
+    ).catch(error => {
+
+        console.error(
+            '[TELEGRAM PANEL]',
+            error.message
         );
-
-        return;
-    }
-
-    // Solo nos interesan eventos de texto
-    if (
-        !cleanLine.startsWith(
-            'notifytextmessage'
-        )
-    ) {
-        return;
-    }
-
-    console.log(
-        '[TS EVENT RAW]',
-        cleanLine
-    );
-
-    const data =
-        cleanLine.replace(
-            /^notifytextmessage\s*/,
-            ''
-        );
-
-    const fields =
-        parseTsFields(data);
-
-    console.log(
-        '[TS EVENT PARSED]',
-        JSON.stringify(fields)
-    );
-
-    const targetMode =
-        String(
-            fields.targetmode || ''
-        );
-
-    const target =
-        String(
-            fields.target || ''
-        );
-
-    const message =
-        fields.msg || '';
-
-    const name =
-        fields.invokername ||
-        fields.invokeruid ||
-        'Usuario';
-
-    if (!message) {
-        console.log(
-            '[TS EVENT] Mensaje vacío'
-        );
-
-        return;
-    }
-
-    // --------------------------------------------------------
-    // SOLO MENSAJES DEL CANAL CONFIGURADO
-    // --------------------------------------------------------
-
-    if (
-        targetMode &&
-        targetMode !== '2'
-    ) {
-        console.log(
-            `[TS EVENT] Ignorado por targetmode=${targetMode}`
-        );
-
-        return;
-    }
-
-    if (
-        target &&
-        target !== String(TS_CHANNEL_ID)
-    ) {
-        console.log(
-            `[TS EVENT] Ignorado por target=${target}`
-        );
-
-        return;
-    }
-
-    // --------------------------------------------------------
-    // EVITAR DUPLICADOS DEL PROPIO BOT
-    // --------------------------------------------------------
-
-    const lastSent =
-        session.lastSentMessage;
-
-    if (
-        lastSent &&
-        lastSent === message
-    ) {
-
-        console.log(
-            '[TS EVENT] Ignorado: mensaje propio ya mostrado'
-        );
-
-        session.lastSentMessage = null;
-
-        return;
-    }
-
-    // --------------------------------------------------------
-    // GUARDAR MENSAJE
-    // --------------------------------------------------------
-
-    session.messages.push({
-        name,
-        text: message
     });
-
-    if (
-        session.messages.length > 20
-    ) {
-        session.messages.shift();
-    }
-
-    console.log(
-        `[TS CHAT] ${name}: ${message}`
-    );
-
-    updateChatPanel(chatId);
 }
 
 // ============================================================
@@ -839,15 +754,9 @@ function openTsChat(chatId) {
 
     return new Promise((resolve, reject) => {
 
-        if (
-            tsChatSessions[chatId]
-        ) {
+        if (tsChatSessions[chatId]) {
             closeTsChat(chatId);
         }
-
-        console.log(
-            `[TS CHAT] Abriendo conexión para Telegram ${chatId}`
-        );
 
         const conn =
             new Client();
@@ -856,15 +765,17 @@ function openTsChat(chatId) {
 
             conn,
 
-            stream: null,
+            stream:
+                null,
 
-            panelId: null,
+            panelId:
+                null,
 
-            messages: [],
+            messages:
+                [],
 
-            buffer: '',
-
-            lastSentMessage: null
+            buffer:
+                ''
         };
 
         tsChatSessions[chatId] =
@@ -877,14 +788,14 @@ function openTsChat(chatId) {
             );
 
             conn.shell(
+                {
+                    term: 'dumb',
+                    cols: 120,
+                    rows: 40
+                },
                 (err, stream) => {
 
                     if (err) {
-
-                        console.error(
-                            '[TS CHAT] Error shell:',
-                            err.message
-                        );
 
                         closeTsChat(chatId);
 
@@ -895,109 +806,221 @@ function openTsChat(chatId) {
                         stream;
 
                     console.log(
-                        '[TS CHAT] Shell TeamSpeak abierto'
+                        '[TS CHAT] Shell abierto'
                     );
 
-                    // ------------------------------------------------
-                    // RECIBIR DATOS
-                    // ------------------------------------------------
+                    // ====================================================
+                    // RECEPCIÓN DE DATOS
+                    // ====================================================
 
-                    stream.on(
-                        'data',
-                        data => {
+                    stream.on('data', data => {
 
-                            const text =
-                                data.toString();
+                        let raw =
+                            data.toString();
 
-                            console.log(
-                                '[TS RAW]',
-                                JSON.stringify(text)
-                            );
+                        console.log(
+                            '[TS RAW]',
+                            JSON.stringify(raw)
+                        );
 
-                            session.buffer +=
-                                text;
+                        // Eliminar ANSI.
+                        raw =
+                            removeAnsi(raw);
 
-                            const lines =
-                                session.buffer.split(
-                                    /\r?\n/
-                                );
+                        // Añadir al buffer.
+                        session.buffer += raw;
 
-                            session.buffer =
-                                lines.pop() || '';
+                        /*
+                         * TeamSpeak puede enviar una línea completa
+                         * o partirla en varios paquetes.
+                         *
+                         * Ejemplo:
+                         *
+                         * paquete 1:
+                         * notifytextmessage targetmode=2 msg=aa
+                         *
+                         * paquete 2:
+                         * invokerid=10 invokername=Yeray_03
+                         *
+                         * Por eso NO procesamos cada data como
+                         * si fuera una línea completa.
+                         */
 
-                            for (
-                                const line of lines
-                            ) {
+                        const lines =
+                            session.buffer
+                                .split(/\r?\n/);
 
-                                processTsLine(
-                                    chatId,
-                                    line
-                                );
+                        // Guardar la última parte si está incompleta.
+                        session.buffer =
+                            lines.pop() || '';
+
+                        for (
+                            const rawLine of lines
+                        ) {
+
+                            const line =
+                                rawLine.trim();
+
+                            if (!line) {
+                                continue;
                             }
-                        }
-                    );
-
-                    // ------------------------------------------------
-                    // CERRAR
-                    // ------------------------------------------------
-
-                    stream.on(
-                        'close',
-                        () => {
 
                             console.log(
-                                '[TS CHAT] Stream cerrado'
+                                '[TS LINE]',
+                                line
                             );
+
+                            // ------------------------------------------------
+                            // EVENTO DE MENSAJE
+                            // ------------------------------------------------
 
                             if (
-                                tsChatSessions[chatId]
+                                line.startsWith(
+                                    'notifytextmessage'
+                                )
                             ) {
 
-                                delete tsChatSessions[
+                                const eventLine =
+                                    line.replace(
+                                        /^notifytextmessage\s*/,
+                                        ''
+                                    );
+
+                                console.log(
+                                    '[TS EVENT RAW]',
+                                    eventLine
+                                );
+
+                                const fields =
+                                    parseTsFields(
+                                        eventLine
+                                    );
+
+                                console.log(
+                                    '[TS EVENT PARSED]',
+                                    JSON.stringify(fields)
+                                );
+
+                                const message =
+                                    fields.msg || '';
+
+                                const name =
+                                    fields.invokername ||
+                                    fields.invokeruid ||
+                                    'Usuario';
+
+                                if (!message) {
+
+                                    console.log(
+                                        '[TS EVENT] Mensaje vacío'
+                                    );
+
+                                    continue;
+                                }
+
+                                /*
+                                 * Los mensajes que enviamos desde
+                                 * Telegram los mostramos inmediatamente
+                                 * como "Tú".
+                                 *
+                                 * TeamSpeak también genera un evento
+                                 * notifytextmessage para ese mensaje.
+                                 *
+                                 * Lo ignoramos para evitar duplicarlo.
+                                 */
+
+                                if (
+                                    fields.invokeruid === TS_USER ||
+                                    fields.invokername === TS_USER
+                                ) {
+
+                                    console.log(
+                                        '[TS EVENT] Ignorado: mensaje propio ya mostrado'
+                                    );
+
+                                    continue;
+                                }
+
+                                console.log(
+                                    `[TS EVENT] ${name}: ${message}`
+                                );
+
+                                session.messages.push({
+
+                                    name:
+                                        name,
+
+                                    text:
+                                        message
+                                });
+
+                                if (
+                                    session.messages.length > 20
+                                ) {
+
+                                    session.messages.shift();
+                                }
+
+                                updateChatPanel(
                                     chatId
-                                ];
+                                );
                             }
                         }
-                    );
+                    });
 
-                    stream.on(
-                        'error',
-                        error => {
+                    // ====================================================
+                    // CLOSE
+                    // ====================================================
 
-                            console.error(
-                                '[TS CHAT] Stream error:',
-                                error.message
-                            );
+                    stream.on('close', () => {
 
-                            closeTsChat(
+                        console.log(
+                            '[TS CHAT] Stream cerrado'
+                        );
+
+                        if (
+                            tsChatSessions[chatId]
+                        ) {
+
+                            delete tsChatSessions[
                                 chatId
-                            );
+                            ];
                         }
-                    );
+                    });
 
-                    // ------------------------------------------------
+                    // ====================================================
+                    // ERROR
+                    // ====================================================
+
+                    stream.on('error', error => {
+
+                        console.error(
+                            '[TS STREAM ERROR]',
+                            error.message
+                        );
+
+                        closeTsChat(
+                            chatId
+                        );
+                    });
+
+                    // ====================================================
                     // SELECCIONAR SERVIDOR
-                    // ------------------------------------------------
-
-                    console.log(
-                        `[TS CHAT] Seleccionando servidor ${TS_SERVER_ID}`
-                    );
+                    // ====================================================
 
                     stream.write(
                         `use ${TS_SERVER_ID}\n`
                     );
 
-                    // ------------------------------------------------
-                    // ESPERAR Y SUSCRIBIRSE
-                    // ------------------------------------------------
+                    console.log(
+                        `[TS CHAT] Seleccionando servidor ${TS_SERVER_ID}`
+                    );
+
+                    // ====================================================
+                    // SUSCRIBIRSE A MENSAJES DEL CANAL
+                    // ====================================================
 
                     setTimeout(() => {
-
-                        if (
-                            !tsChatSessions[chatId]
-                        ) {
-                            return;
-                        }
 
                         console.log(
                             `[TS CHAT] Suscribiendo a textchannel del canal ${TS_CHANNEL_ID}`
@@ -1007,136 +1030,108 @@ function openTsChat(chatId) {
                             `servernotifyregister event=textchannel id=${TS_CHANNEL_ID}\n`
                         );
 
-                        // ------------------------------------------------
-                        // TEST
-                        // ------------------------------------------------
+                        console.log(
+                            '[TS CHAT] Suscripción enviada'
+                        );
 
-                        setTimeout(() => {
+                    }, 800);
 
-                            console.log(
-                                '[TS CHAT] Suscripción enviada'
-                            );
-
-                            resolve();
-
-                        }, 500);
-
-                    }, 1000);
+                    resolve();
                 }
             );
         });
 
-        conn.on(
-            'error',
-            error => {
+        conn.on('error', error => {
 
-                console.error(
-                    '[TS CHAT] Connection error:',
-                    error.message
-                );
+            console.error(
+                '[TS SSH ERROR]',
+                error.message
+            );
 
-                closeTsChat(
-                    chatId
-                );
+            closeTsChat(chatId);
 
-                reject(error);
-            }
-        );
-
-        conn.on(
-            'close',
-            () => {
-
-                console.log(
-                    '[TS CHAT] SSH cerrado'
-                );
-            }
-        );
-
-        console.log(
-            `[TS CHAT] Conectando ${TS_HOST}:${TS_PORT}`
-        );
+            reject(error);
+        });
 
         conn.connect({
-            host: TS_HOST,
 
-            port: TS_PORT,
+            host:
+                TS_HOST,
 
-            username: TS_USER,
+            port:
+                TS_PORT,
 
-            password: TS_PASS,
+            username:
+                TS_USER,
 
-            readyTimeout: 7000,
+            password:
+                TS_PASS,
 
-            keepaliveInterval: 10000
+            readyTimeout:
+                7000,
+
+            keepaliveInterval:
+                10000
         });
     });
 }
 
 // ============================================================
-// ENVIAR MENSAJE TEAMSpeak
+// ENVIAR MENSAJE A TEAMSPEAK
 // ============================================================
 
-function sendTsMessage(
-    chatId,
-    message
-) {
+function sendTsMessage(chatId, message) {
 
-    return new Promise(
-        (resolve, reject) => {
+    return new Promise((resolve, reject) => {
 
-            const session =
-                tsChatSessions[chatId];
+        const session =
+            tsChatSessions[chatId];
 
-            if (
-                !session ||
-                !session.stream
-            ) {
+        if (
+            !session ||
+            !session.stream
+        ) {
 
-                return reject(
-                    new Error(
-                        'Chat TeamSpeak cerrado'
-                    )
-                );
-            }
-
-            const escaped =
-                tsEscape(message);
-
-            const command =
-                `sendtextmessage targetmode=2 target=${TS_CHANNEL_ID} msg=${escaped}\n`;
-
-            console.log(
-                '[TS SEND]',
-                command.trim()
-            );
-
-            session.lastSentMessage =
-                message;
-
-            session.stream.write(
-                command,
-                error => {
-
-                    if (error) {
-
-                        console.error(
-                            '[TS SEND ERROR]',
-                            error.message
-                        );
-
-                        return reject(error);
-                    }
-
-                    console.log(
-                        '[TS SEND] Comando enviado correctamente'
-                    );
-
-                    resolve();
-                }
+            return reject(
+                new Error(
+                    'Chat TeamSpeak cerrado'
+                )
             );
         }
-    );
+
+        const escaped =
+            tsEscape(message);
+
+        const command =
+            `sendtextmessage targetmode=2 target=${TS_CHANNEL_ID} msg=${escaped}\n`;
+
+        console.log(
+            '[TS SEND]',
+            command.trim()
+        );
+
+        try {
+
+            session.stream.write(
+                command
+            );
+
+            console.log(
+                '[TS SEND] Comando enviado correctamente'
+            );
+
+            resolve();
+
+        } catch (error) {
+
+            console.error(
+                '[TS SEND ERROR]',
+                error.message
+            );
+
+            reject(error);
+        }
+    });
 }
 
 // ============================================================
@@ -1153,71 +1148,77 @@ async function sendMainMenu(chatId) {
         [
             {
                 text: '🖥️ Servidores',
-                callback_data: 'menu_servers'
+                callback_data:
+                    'menu_servers'
             },
 
             {
                 text: '👥 TeamSpeak',
-                callback_data: 'menu_ts'
+                callback_data:
+                    'menu_ts'
             }
         ],
 
         [
             {
                 text: '💬 Chat TeamSpeak',
-                callback_data: 'menu_chat'
+                callback_data:
+                    'menu_chat'
             },
 
             {
                 text: '📊 Monitor',
-                callback_data: 'menu_monitor'
+                callback_data:
+                    'menu_monitor'
             }
         ]
     ];
 
-    if (
-        role === 'admin'
-    ) {
+    if (role === 'admin') {
 
         keyboard.push([
+
             {
                 text: '🔥 Top procesos',
-                callback_data: 'sys_top'
+                callback_data:
+                    'sys_top'
             },
 
             {
                 text: '🚀 Speedtest',
-                callback_data: 'sys_speedtest'
+                callback_data:
+                    'sys_speedtest'
             }
         ]);
 
         keyboard.push([
+
             {
                 text: '🛰️ Reiniciar PC',
-                callback_data: 'sys_reboot'
+                callback_data:
+                    'sys_reboot'
             },
 
             {
                 text: '💀 Apagar PC',
-                callback_data: 'sys_poweroff'
+                callback_data:
+                    'sys_poweroff'
             }
         ]);
     }
 
     await bot.sendMessage(
+
         chatId,
 
-        '🏠 *PANEL DE CONTROL*\n' +
-        '━━━━━━━━━━━━━━━━━━━━\n' +
-        `👤 Acceso: *${
-            role === 'admin'
-                ? 'Administrador'
-                : 'Invitado'
-        }*\n\n` +
-        'Selecciona una sección:',
+        `🏠 *PANEL DE CONTROL*\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `👤 Acceso: *${role === 'admin' ? 'Administrador' : 'Invitado'}*\n\n` +
+        `Selecciona una sección:`,
 
         {
-            parse_mode: 'Markdown',
+            parse_mode:
+                'Markdown',
 
             reply_markup: {
                 inline_keyboard:
@@ -1241,9 +1242,7 @@ async function showServers(
 
     let online = 0;
 
-    for (
-        const server of servers
-    ) {
+    for (const server of servers) {
 
         const state =
             server.attributes?.current_state ||
@@ -1254,19 +1253,18 @@ async function showServers(
             state === 'running' ||
             state === 'online'
         ) {
+
             online++;
         }
     }
 
     let text =
-        `🖥️ *SERVIDORES ${online}/${servers.length}*\n` +
-        '━━━━━━━━━━━━━━━━━━━━\n\n';
+        `🖥️ *SERVIDORES  ${online}/${servers.length}*\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     const keyboard = [];
 
-    for (
-        const server of servers
-    ) {
+    for (const server of servers) {
 
         const a =
             server.attributes;
@@ -1285,20 +1283,25 @@ async function showServers(
                 : '🔴';
 
         text +=
-            `${icon} *${a.name}*\n` +
+            `${icon} *${escapeMarkdown(a.name)}*\n` +
             `${running ? 'ONLINE' : 'OFFLINE'}\n\n`;
 
         if (running) {
 
             keyboard.push([
+
                 {
-                    text: `🔄 ${a.name}`,
+                    text:
+                        `🔄 ${a.name}`,
+
                     callback_data:
                         `srv_restart_${id}`
                 },
 
                 {
-                    text: `⏹️ ${a.name}`,
+                    text:
+                        `⏹️ ${a.name}`,
+
                     callback_data:
                         `srv_stop_${id}`
                 }
@@ -1307,6 +1310,7 @@ async function showServers(
         } else {
 
             keyboard.push([
+
                 {
                     text:
                         `▶️ Encender ${a.name}`,
@@ -1319,14 +1323,19 @@ async function showServers(
     }
 
     keyboard.push([
+
         {
-            text: '🔄 Actualizar',
+            text:
+                '🔄 Actualizar',
+
             callback_data:
                 'menu_servers'
         },
 
         {
-            text: '◀️ Volver',
+            text:
+                '◀️ Volver',
+
             callback_data:
                 'menu_home'
         }
@@ -1348,7 +1357,8 @@ async function showServers(
         await bot.editMessageText(
             text,
             {
-                chat_id: chatId,
+                chat_id:
+                    chatId,
 
                 message_id:
                     editMessageId,
@@ -1377,13 +1387,13 @@ async function showTsUsers(chatId) {
         await getTsUsers();
 
     let text =
-        '👥 *TEAMSPEAK*\n' +
-        '━━━━━━━━━━━━━━━━━━━━\n';
+        `👥 *TEAMSPEAK*\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n`;
 
     if (!users.length) {
 
         text +=
-            '\n😴 No hay usuarios conectados.';
+            `\n😴 No hay usuarios conectados.`;
 
     } else {
 
@@ -1393,26 +1403,27 @@ async function showTsUsers(chatId) {
             (user, index) => {
 
                 text +=
-                    `${index + 1}. 🟢 *${
-                        escapeMarkdown(
-                            user.client_nickname
-                        )
-                    }*\n`;
+                    `${index + 1}. 🟢 *${escapeMarkdown(user.client_nickname)}*\n`;
             }
         );
     }
 
     await bot.sendMessage(
+
         chatId,
+
         text,
+
         {
             parse_mode:
                 'Markdown',
 
             reply_markup: {
+
                 inline_keyboard: [
 
                     [
+
                         {
                             text:
                                 '🔄 Actualizar',
@@ -1431,6 +1442,7 @@ async function showTsUsers(chatId) {
                     ],
 
                     [
+
                         {
                             text:
                                 '◀️ Volver',
@@ -1464,17 +1476,13 @@ async function showMonitor(chatId) {
         Number(hw.diskP) || 0;
 
     const text =
-        '📊 *HOST MONITOR*\n' +
-        '━━━━━━━━━━━━━━━━━━━━\n\n' +
+        `📊 *HOST MONITOR*\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n\n` +
 
         `🌡️ *CPU:* \`${hw.cpu}°C\`\n` +
         `${drawBar(cpu)}\n\n` +
 
-        `🎮 *GPU:* \`${
-            hw.gpu === 'N/D'
-                ? 'N/D'
-                : hw.gpu + '°C'
-        }\`\n\n` +
+        `🎮 *GPU:* \`${hw.gpu === 'N/D' ? 'N/D' : hw.gpu + '°C'}\`\n\n` +
 
         `📟 *RAM:* \`${hw.ramP}%\`\n` +
         `${drawBar(ram)}\n\n` +
@@ -1483,22 +1491,25 @@ async function showMonitor(chatId) {
         `${drawBar(disk)}\n\n` +
 
         `⏱️ *UPTIME:* \`${hw.up}\`\n` +
-
         `🌐 *PING:* \`${hw.ping} ms\`\n` +
-
         `⬇️ \`${hw.rx}\`   ⬆️ \`${hw.tx}\``;
 
     await bot.sendMessage(
+
         chatId,
+
         text,
+
         {
             parse_mode:
                 'Markdown',
 
             reply_markup: {
+
                 inline_keyboard: [
 
                     [
+
                         {
                             text:
                                 '🔄 Actualizar',
@@ -1509,6 +1520,7 @@ async function showMonitor(chatId) {
                     ],
 
                     [
+
                         {
                             text:
                                 '◀️ Volver',
@@ -1524,7 +1536,7 @@ async function showMonitor(chatId) {
 }
 
 // ============================================================
-// START
+// /START
 // ============================================================
 
 bot.onText(
@@ -1539,15 +1551,14 @@ bot.onText(
             msg.message_id
         );
 
-        if (
-            !isAuthenticated(chatId)
-        ) {
+        if (!isAuthenticated(chatId)) {
 
             await bot.sendMessage(
+
                 chatId,
 
-                '🔐 *ACCESO AL PANEL*\n\n' +
-                'Introduce la contraseña de invitado o administrador:',
+                `🔐 *ACCESO AL PANEL*\n\n` +
+                `Introduce la contraseña de invitado o administrador:`,
 
                 {
                     parse_mode:
@@ -1558,9 +1569,7 @@ bot.onText(
             return;
         }
 
-        await sendMainMenu(
-            chatId
-        );
+        await sendMainMenu(chatId);
     }
 );
 
@@ -1582,23 +1591,18 @@ bot.on(
         const text =
             msg.text.trim();
 
-        if (
-            text.startsWith('/')
-        ) {
+        // No procesar comandos.
+        if (text.startsWith('/')) {
             return;
         }
 
-        // ------------------------------------------------------
+        // ====================================================
         // AUTENTICACIÓN
-        // ------------------------------------------------------
+        // ====================================================
 
-        if (
-            !isAuthenticated(chatId)
-        ) {
+        if (!isAuthenticated(chatId)) {
 
-            if (
-                text === ADMIN_PASSWORD
-            ) {
+            if (text === ADMIN_PASSWORD) {
 
                 authSessions[chatId] = {
                     role: 'admin'
@@ -1606,7 +1610,7 @@ bot.on(
 
                 await bot.sendMessage(
                     chatId,
-                    '🔓 *Acceso de administrador concedido.*',
+                    `🔓 *Acceso de administrador concedido.*`,
                     {
                         parse_mode:
                             'Markdown'
@@ -1620,9 +1624,7 @@ bot.on(
                 return;
             }
 
-            if (
-                text === GUEST_PASSWORD
-            ) {
+            if (text === GUEST_PASSWORD) {
 
                 authSessions[chatId] = {
                     role: 'guest'
@@ -1630,7 +1632,7 @@ bot.on(
 
                 await bot.sendMessage(
                     chatId,
-                    '🔓 *Acceso de invitado concedido.*',
+                    `🔓 *Acceso de invitado concedido.*`,
                     {
                         parse_mode:
                             'Markdown'
@@ -1646,27 +1648,23 @@ bot.on(
 
             await bot.sendMessage(
                 chatId,
-                '❌ Contraseña incorrecta.'
+                `❌ Contraseña incorrecta.`
             );
 
             return;
         }
 
-        // ------------------------------------------------------
+        // ====================================================
         // CHAT TEAMSPEAK
-        // ------------------------------------------------------
+        // ====================================================
 
-        if (
-            tsChatSessions[chatId]
-        ) {
+        if (tsChatSessions[chatId]) {
 
-            if (
-                text.length > 300
-            ) {
+            if (text.length > 300) {
 
                 await bot.sendMessage(
                     chatId,
-                    '⚠️ El mensaje es demasiado largo. Máximo 300 caracteres.'
+                    `⚠️ El mensaje es demasiado largo. Máximo 300 caracteres.`
                 );
 
                 return;
@@ -1679,17 +1677,23 @@ bot.on(
                     text
                 );
 
+                // Mostrar inmediatamente nuestro propio mensaje.
                 const session =
                     tsChatSessions[chatId];
 
                 session.messages.push({
-                    name: 'Tú',
-                    text
+
+                    name:
+                        'Tú',
+
+                    text:
+                        text
                 });
 
                 if (
                     session.messages.length > 20
                 ) {
+
                     session.messages.shift();
                 }
 
@@ -1700,13 +1704,13 @@ bot.on(
             } catch (e) {
 
                 console.error(
-                    '[TS TELEGRAM SEND]',
-                    e
+                    '[TELEGRAM -> TS]',
+                    e.message
                 );
 
                 await bot.sendMessage(
                     chatId,
-                    '❌ No se pudo enviar el mensaje a TeamSpeak.'
+                    `❌ No se pudo enviar el mensaje a TeamSpeak.`
                 );
             }
         }
@@ -1738,9 +1742,7 @@ bot.on(
         // MENÚ
         // ====================================================
 
-        if (
-            data === 'menu_home'
-        ) {
+        if (data === 'menu_home') {
 
             await sendMainMenu(
                 chatId
@@ -1749,9 +1751,7 @@ bot.on(
             return;
         }
 
-        if (
-            data === 'menu_servers'
-        ) {
+        if (data === 'menu_servers') {
 
             try {
 
@@ -1764,21 +1764,19 @@ bot.on(
 
                 console.error(
                     'Pterodactyl:',
-                    e
+                    e.message
                 );
 
                 await bot.sendMessage(
                     chatId,
-                    '🔴 No se pudo consultar Pterodactyl.'
+                    `🔴 No se pudo consultar Pterodactyl.`
                 );
             }
 
             return;
         }
 
-        if (
-            data === 'menu_ts'
-        ) {
+        if (data === 'menu_ts') {
 
             try {
 
@@ -1789,22 +1787,20 @@ bot.on(
             } catch (e) {
 
                 console.error(
-                    'TeamSpeak:',
-                    e
+                    'TeamSpeak users:',
+                    e.message
                 );
 
                 await bot.sendMessage(
                     chatId,
-                    '🔴 No se pudo consultar TeamSpeak.'
+                    `🔴 No se pudo consultar TeamSpeak.`
                 );
             }
 
             return;
         }
 
-        if (
-            data === 'menu_monitor'
-        ) {
+        if (data === 'menu_monitor') {
 
             try {
 
@@ -1816,12 +1812,12 @@ bot.on(
 
                 console.error(
                     'Monitor:',
-                    e
+                    e.message
                 );
 
                 await bot.sendMessage(
                     chatId,
-                    '🔴 No se pudo obtener el monitor del host.'
+                    `🔴 No se pudo obtener el monitor del host.`
                 );
             }
 
@@ -1829,21 +1825,21 @@ bot.on(
         }
 
         // ====================================================
-        // CHAT TEAMSPEAK
+        // ABRIR CHAT TEAMSPEAK
         // ====================================================
 
-        if (
-            data === 'menu_chat'
-        ) {
+        if (data === 'menu_chat') {
 
             try {
 
                 await bot.editMessageText(
-                    '💬 *Conectando al chat de TeamSpeak...*\n\n' +
-                    '⏳ Abriendo conexión en tiempo real...',
+
+                    `💬 *Conectando al chat de TeamSpeak...*\n\n` +
+                    `⏳ Abriendo conexión en tiempo real...`,
 
                     {
-                        chat_id: chatId,
+                        chat_id:
+                            chatId,
 
                         message_id:
                             messageId,
@@ -1857,15 +1853,10 @@ bot.on(
                     chatId
                 );
 
-                if (
-                    tsChatSessions[chatId]
-                ) {
-
-                    tsChatSessions[
-                        chatId
-                    ].panelId =
-                        messageId;
-                }
+                tsChatSessions[
+                    chatId
+                ].panelId =
+                    messageId;
 
                 updateChatPanel(
                     chatId
@@ -1874,7 +1865,7 @@ bot.on(
             } catch (e) {
 
                 console.error(
-                    '[TS CHAT OPEN]',
+                    'TS CHAT:',
                     e
                 );
 
@@ -1883,11 +1874,13 @@ bot.on(
                 );
 
                 await bot.editMessageText(
-                    '🔴 *No se pudo conectar al chat de TeamSpeak.*\n\n' +
+
+                    `🔴 *No se pudo conectar al chat de TeamSpeak.*\n\n` +
                     `Comprueba que el puerto ${TS_PORT} esté accesible desde Northflank.`,
 
                     {
-                        chat_id: chatId,
+                        chat_id:
+                            chatId,
 
                         message_id:
                             messageId,
@@ -1896,9 +1889,11 @@ bot.on(
                             'Markdown',
 
                         reply_markup: {
+
                             inline_keyboard: [
 
                                 [
+
                                     {
                                         text:
                                             '◀️ Volver',
@@ -1920,19 +1915,19 @@ bot.on(
         // CERRAR CHAT
         // ====================================================
 
-        if (
-            data === 'ts_chat_close'
-        ) {
+        if (data === 'ts_chat_close') {
 
             closeTsChat(
                 chatId
             );
 
             await bot.editMessageText(
-                '💬 *Chat TeamSpeak cerrado.*',
+
+                `💬 *Chat TeamSpeak cerrado.*`,
 
                 {
-                    chat_id: chatId,
+                    chat_id:
+                        chatId,
 
                     message_id:
                         messageId,
@@ -1941,9 +1936,11 @@ bot.on(
                         'Markdown',
 
                     reply_markup: {
+
                         inline_keyboard: [
 
                             [
+
                                 {
                                     text:
                                         '💬 Volver a abrir',
@@ -1954,6 +1951,7 @@ bot.on(
                             ],
 
                             [
+
                                 {
                                     text:
                                         '◀️ Menú',
@@ -1974,35 +1972,27 @@ bot.on(
         // USUARIOS DESDE CHAT
         // ====================================================
 
-        if (
-            data === 'ts_chat_users'
-        ) {
+        if (data === 'ts_chat_users') {
 
             const users =
                 await getTsUsers();
 
             let usersText =
-                '👥 *USUARIOS CONECTADOS*\n' +
-                '━━━━━━━━━━━━━━━━━━━━\n\n';
+                `👥 *USUARIOS CONECTADOS*\n` +
+                `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-            if (
-                !users.length
-            ) {
+            if (!users.length) {
 
                 usersText +=
-                    '😴 Nadie conectado.';
+                    `😴 Nadie conectado.`;
 
             } else {
 
                 usersText +=
                     users
                         .map(
-                            (user, index) =>
-                                `${index + 1}. 🟢 ${
-                                    escapeMarkdown(
-                                        user.client_nickname
-                                    )
-                                }`
+                            (u, i) =>
+                                `${i + 1}. 🟢 ${escapeMarkdown(u.client_nickname)}`
                         )
                         .join('\n');
             }
@@ -2023,17 +2013,13 @@ bot.on(
         // ACCIONES SERVIDORES
         // ====================================================
 
-        if (
-            data.startsWith('srv_')
-        ) {
+        if (data.startsWith('srv_')) {
 
-            if (
-                !requireAdmin(chatId)
-            ) {
+            if (!requireAdmin(chatId)) {
 
                 await bot.sendMessage(
                     chatId,
-                    '🔒 Esta acción requiere permisos de administrador.'
+                    `🔒 Esta acción requiere permisos de administrador.`
                 );
 
                 return;
@@ -2056,14 +2042,19 @@ bot.on(
                 const users =
                     await getTsUsers();
 
-                if (
-                    users.length > 0
-                ) {
+                if (users.length > 0) {
 
-                    pendingActions[chatId] = {
-                        type: 'server',
+                    pendingActions[
+                        chatId
+                    ] = {
+
+                        type:
+                            'server',
+
                         action,
+
                         serverId,
+
                         users
                     };
 
@@ -2071,29 +2062,30 @@ bot.on(
                         users
                             .slice(0, 8)
                             .map(
-                                user =>
-                                    `• ${escapeMarkdown(
-                                        user.client_nickname
-                                    )}`
+                                u =>
+                                    `• ${escapeMarkdown(u.client_nickname)}`
                             )
                             .join('\n');
 
                     await bot.sendMessage(
+
                         chatId,
 
-                        '⚠️ *HAY USUARIOS CONECTADOS*\n\n' +
+                        `⚠️ *HAY USUARIOS CONECTADOS*\n\n` +
                         `TeamSpeak tiene actualmente *${users.length}* usuario(s):\n\n` +
                         `${names}\n\n` +
-                        '¿Quieres continuar con la operación?',
+                        `¿Quieres continuar con la operación?`,
 
                         {
                             parse_mode:
                                 'Markdown',
 
                             reply_markup: {
+
                                 inline_keyboard: [
 
                                     [
+
                                         {
                                             text:
                                                 '⚠️ Sí, continuar',
@@ -2128,12 +2120,14 @@ bot.on(
                     );
 
                 if (!res.ok) {
+
                     throw new Error(
                         `HTTP ${res.status}`
                     );
                 }
 
                 await bot.sendMessage(
+
                     chatId,
 
                     `✅ *${action.toUpperCase()}* enviado correctamente.`,
@@ -2148,12 +2142,12 @@ bot.on(
 
                 console.error(
                     'Server action:',
-                    e
+                    e.message
                 );
 
                 await bot.sendMessage(
                     chatId,
-                    '❌ Error al ejecutar la acción.'
+                    `❌ Error al ejecutar la acción.`
                 );
             }
 
@@ -2164,13 +2158,9 @@ bot.on(
         // CONFIRMAR SERVIDOR
         // ====================================================
 
-        if (
-            data === 'confirm_server'
-        ) {
+        if (data === 'confirm_server') {
 
-            if (
-                !requireAdmin(chatId)
-            ) {
+            if (!requireAdmin(chatId)) {
                 return;
             }
 
@@ -2181,7 +2171,7 @@ bot.on(
 
                 await bot.sendMessage(
                     chatId,
-                    '⚠️ La operación ya no está disponible.'
+                    `⚠️ La operación ya no está disponible.`
                 );
 
                 return;
@@ -2204,6 +2194,7 @@ bot.on(
                 }
 
                 await bot.sendMessage(
+
                     chatId,
 
                     `✅ *${pending.action.toUpperCase()}* enviado.`,
@@ -2218,7 +2209,7 @@ bot.on(
 
                 await bot.sendMessage(
                     chatId,
-                    '❌ No se pudo ejecutar la operación.'
+                    `❌ No se pudo ejecutar la operación.`
                 );
             }
 
@@ -2229,9 +2220,7 @@ bot.on(
         // CANCELAR
         // ====================================================
 
-        if (
-            data === 'cancel_action'
-        ) {
+        if (data === 'cancel_action') {
 
             delete pendingActions[
                 chatId
@@ -2239,7 +2228,7 @@ bot.on(
 
             await bot.sendMessage(
                 chatId,
-                '❌ Operación cancelada.'
+                `❌ Operación cancelada.`
             );
 
             return;
@@ -2249,76 +2238,74 @@ bot.on(
         // TOP PROCESOS
         // ====================================================
 
-        if (
-            data === 'sys_top'
-        ) {
+        if (data === 'sys_top') {
 
-            if (
-                !requireAdmin(chatId)
-            ) {
+            if (!requireAdmin(chatId)) {
                 return;
             }
 
             const conn =
                 new Client();
 
-            conn.on(
-                'ready',
-                () => {
+            conn.on('ready', () => {
 
-                    conn.exec(
-                        'ps -eo pcpu,comm --sort=-pcpu | head -n 6',
+                conn.exec(
+                    'ps -eo pcpu,comm --sort=-pcpu | head -n 6',
+                    (err, stream) => {
 
-                        (err, stream) => {
+                        if (err) {
 
-                            if (err) {
+                            conn.end();
 
-                                conn.end();
-
-                                return;
-                            }
-
-                            let result = '';
-
-                            stream
-                                .on(
-                                    'data',
-                                    data => {
-                                        result +=
-                                            data.toString();
-                                    }
-                                )
-                                .on(
-                                    'close',
-                                    () => {
-
-                                        bot.sendMessage(
-                                            chatId,
-
-                                            `🔥 *TOP PROCESOS*\n\n` +
-                                            '```\n' +
-                                            result +
-                                            '```',
-
-                                            {
-                                                parse_mode:
-                                                    'Markdown'
-                                            }
-                                        );
-
-                                        conn.end();
-                                    }
-                                );
+                            return;
                         }
-                    );
-                }
-            );
+
+                        let result =
+                            '';
+
+                        stream
+                            .on(
+                                'data',
+                                d =>
+                                    result += d.toString()
+                            )
+                            .on(
+                                'close',
+                                () => {
+
+                                    bot.sendMessage(
+
+                                        chatId,
+
+                                        `🔥 *TOP PROCESOS*\n\n` +
+                                        `\`\`\`\n${result}\`\`\``,
+
+                                        {
+                                            parse_mode:
+                                                'Markdown'
+                                        }
+                                    );
+
+                                    conn.end();
+                                }
+                            );
+                    }
+                );
+            });
 
             conn.connect({
-                host: sshHost,
-                port: 2222,
-                username: sshUser,
-                password: sshPass
+
+                host:
+                    sshHost,
+
+                port:
+                    2222,
+
+                username:
+                    sshUser,
+
+                password:
+                    sshPass
             });
 
             return;
@@ -2328,86 +2315,86 @@ bot.on(
         // SPEEDTEST
         // ====================================================
 
-        if (
-            data === 'sys_speedtest'
-        ) {
+        if (data === 'sys_speedtest') {
 
-            if (
-                !requireAdmin(chatId)
-            ) {
+            if (!requireAdmin(chatId)) {
                 return;
             }
 
             const testing =
                 await bot.sendMessage(
+
                     chatId,
-                    '🌐 Ejecutando Speedtest...\n⏳ Puede tardar unos segundos.'
+
+                    `🌐 Ejecutando Speedtest...\n⏳ Puede tardar unos segundos.`
                 );
 
             const conn =
                 new Client();
 
-            conn.on(
-                'ready',
-                () => {
+            conn.on('ready', () => {
 
-                    conn.exec(
-                        'speedtest-cli --simple',
+                conn.exec(
+                    'speedtest-cli --simple',
+                    (err, stream) => {
 
-                        (err, stream) => {
+                        if (err) {
 
-                            if (err) {
+                            conn.end();
 
-                                conn.end();
-
-                                return;
-                            }
-
-                            let result = '';
-
-                            stream
-                                .on(
-                                    'data',
-                                    data => {
-                                        result +=
-                                            data.toString();
-                                    }
-                                )
-                                .on(
-                                    'close',
-                                    () => {
-
-                                        bot.editMessageText(
-                                            '🚀 *SPEEDTEST*\n\n' +
-                                            '```\n' +
-                                            result +
-                                            '```',
-
-                                            {
-                                                chat_id:
-                                                    chatId,
-
-                                                message_id:
-                                                    testing.message_id,
-
-                                                parse_mode:
-                                                    'Markdown'
-                                            }
-                                        );
-
-                                        conn.end();
-                                    }
-                                );
+                            return;
                         }
-                    );
-                }
-            );
+
+                        let result =
+                            '';
+
+                        stream
+                            .on(
+                                'data',
+                                d =>
+                                    result += d.toString()
+                            )
+                            .on(
+                                'close',
+                                () => {
+
+                                    bot.editMessageText(
+
+                                        `🚀 *SPEEDTEST*\n\n` +
+                                        `\`\`\`\n${result}\`\`\``,
+
+                                        {
+                                            chat_id:
+                                                chatId,
+
+                                            message_id:
+                                                testing.message_id,
+
+                                            parse_mode:
+                                                'Markdown'
+                                        }
+                                    );
+
+                                    conn.end();
+                                }
+                            );
+                    }
+                );
+            });
 
             conn.connect({
-                host: sshHost,
-                port: 2222,
-                username: sshUser,
-                password: sshPass
+
+                host:
+                    sshHost,
+
+                port:
+                    2222,
+
+                username:
+                    sshUser,
+
+                password:
+                    sshPass
             });
 
             return;
@@ -2422,9 +2409,7 @@ bot.on(
             data === 'sys_poweroff'
         ) {
 
-            if (
-                !requireAdmin(chatId)
-            ) {
+            if (!requireAdmin(chatId)) {
                 return;
             }
 
@@ -2436,13 +2421,17 @@ bot.on(
             const users =
                 await getTsUsers();
 
-            if (
-                users.length > 0
-            ) {
+            if (users.length > 0) {
 
-                pendingActions[chatId] = {
-                    type: 'system',
+                pendingActions[
+                    chatId
+                ] = {
+
+                    type:
+                        'system',
+
                     action,
+
                     users
                 };
 
@@ -2450,33 +2439,30 @@ bot.on(
                     users
                         .slice(0, 8)
                         .map(
-                            user =>
-                                `• ${escapeMarkdown(
-                                    user.client_nickname
-                                )}`
+                            u =>
+                                `• ${escapeMarkdown(u.client_nickname)}`
                         )
                         .join('\n');
 
                 await bot.sendMessage(
+
                     chatId,
 
-                    '⚠️ *USUARIOS CONECTADOS A TEAMSPEAK*\n\n' +
+                    `⚠️ *USUARIOS CONECTADOS A TEAMSPEAK*\n\n` +
                     `${names}\n\n` +
                     `Hay *${users.length}* usuario(s) conectado(s).\n\n` +
-                    `¿Seguro que quieres ${
-                        action === 'reboot'
-                            ? 'reiniciar'
-                            : 'apagar'
-                    } el PC?`,
+                    `¿Seguro que quieres ${action === 'reboot' ? 'reiniciar' : 'apagar'} el PC?`,
 
                     {
                         parse_mode:
                             'Markdown',
 
                         reply_markup: {
+
                             inline_keyboard: [
 
                                 [
+
                                     {
                                         text:
                                             '⚠️ Continuar',
@@ -2513,13 +2499,9 @@ bot.on(
         // CONFIRMAR SISTEMA
         // ====================================================
 
-        if (
-            data === 'confirm_system'
-        ) {
+        if (data === 'confirm_system') {
 
-            if (
-                !requireAdmin(chatId)
-            ) {
+            if (!requireAdmin(chatId)) {
                 return;
             }
 
@@ -2557,6 +2539,7 @@ async function executeSystemAction(
 ) {
 
     await bot.sendMessage(
+
         chatId,
 
         `⚠️ Ejecutando *${action}*...`,
@@ -2570,42 +2553,43 @@ async function executeSystemAction(
     const conn =
         new Client();
 
-    conn.on(
-        'ready',
-        () => {
+    conn.on('ready', () => {
 
-            conn.exec(
-                `sudo ${action}`,
+        conn.exec(
+            `sudo ${action}`,
+            () => {
 
-                () => {
+                setTimeout(
+                    () => {
+                        conn.end();
+                    },
+                    1000
+                );
+            }
+        );
+    });
 
-                    setTimeout(
-                        () => {
-                            conn.end();
-                        },
-                        1000
-                    );
-                }
-            );
-        }
-    );
+    conn.on('error', error => {
 
-    conn.on(
-        'error',
-        error => {
-
-            console.error(
-                'System action:',
-                error.message
-            );
-        }
-    );
+        console.error(
+            'System action:',
+            error.message
+        );
+    });
 
     conn.connect({
-        host: sshHost,
-        port: 2222,
-        username: sshUser,
-        password: sshPass
+
+        host:
+            sshHost,
+
+        port:
+            2222,
+
+        username:
+            sshUser,
+
+        password:
+            sshPass
     });
 }
 
@@ -2618,10 +2602,11 @@ if (
 ) {
 
     bot.sendMessage(
+
         process.env.STARTUP_MESSAGE_CHAT_ID,
 
-        '✅ *SISTEMA ONLINE*\n' +
-        'El bot de monitorización está operativo.',
+        `✅ *SISTEMA ONLINE*\n` +
+        `El bot de monitorización está operativo.`,
 
         {
             parse_mode:
@@ -2667,14 +2652,6 @@ process.on(
     }
 );
 
-// ============================================================
-// ARRANQUE
-// ============================================================
-
 console.log(
     '🤖 Bot iniciado correctamente.'
-);
-
-console.log(
-    `[TS CONFIG] Host=${TS_HOST} Port=${TS_PORT} Server=${TS_SERVER_ID} Channel=${TS_CHANNEL_ID}`
 );
