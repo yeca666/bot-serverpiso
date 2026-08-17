@@ -496,29 +496,17 @@ function splitTsLine(line) {
 // ============================================================
 
 function parseTsFields(line) {
-
     const fields = {};
 
-    const parts =
-        splitTsLine(line);
+    const regex = /([a-zA-Z0-9_]+)=((?:\\.|[^\s])*)/g;
 
-    for (const item of parts) {
+    let match;
 
-        const eq =
-            item.indexOf('=');
+    while ((match = regex.exec(line)) !== null) {
+        const key = match[1];
+        const value = match[2];
 
-        if (eq === -1) {
-            continue;
-        }
-
-        const key =
-            item.slice(0, eq);
-
-        const value =
-            item.slice(eq + 1);
-
-        fields[key] =
-            decodeTs(value);
+        fields[key] = decodeTs(value);
     }
 
     return fields;
