@@ -5,7 +5,7 @@ const fetch = (...args) =>
     import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 // ============================================================
-// CONFIGURACIÓ
+// CONFIGURACIÓN
 // ============================================================
 
 const token = process.env.token;
@@ -420,7 +420,9 @@ function closeTsChat(chatId) {
 
     try {
         if (session.stream) {
-            session.stream.write('servernotifyunregister event=textserver\n');
+            session.stream.write(
+                'servernotifyunregister event=textchannel\n'
+            );
         }
     } catch (e) {}
 
@@ -476,6 +478,10 @@ function updateChatPanel(chatId) {
     }).catch(() => {});
 }
 
+// ============================================================
+// ABRIR CHAT TEAMSPEAK
+// ============================================================
+
 function openTsChat(chatId) {
     return new Promise((resolve, reject) => {
 
@@ -496,6 +502,8 @@ function openTsChat(chatId) {
 
         conn.on('ready', () => {
 
+            console.log('[TS QUERY] SSH conectado');
+
             conn.shell((err, stream) => {
 
                 if (err) {
@@ -505,23 +513,47 @@ function openTsChat(chatId) {
 
                 session.stream = stream;
 
+                // ====================================================
+                // BUFFER
+                // Evita perder mensajes cuando SSH los entrega
+                // divididos en varios paquetes.
+                // ====================================================
+
+                let tsBuffer = '';
+
                 stream.on('data', data => {
 
-                    const text = data.toString();
+                    tsBuffer += data.toString();
 
-                    const lines = text
-                        .split(/\r?\n/)
-                        .map(x => x.trim())
-                        .filter(Boolean);
+                    const lines = tsBuffer.split(/\r?\n/);
 
-                    for (const line of lines) {
+                    // Guardamos la última línea si está incompleta
+                    tsBuffer = lines.pop() || '';
 
+                    for (const rawLine of lines) {
+
+                        const line = rawLine.trim();
+
+                        if (!line) continue;
+
+                        // DEBUG
+                        console.log('[TS QUERY]', line);
+
+                        // Solo nos interesan eventos de mensajes
                         if (!line.startsWith('notifytextmessage')) {
                             continue;
                         }
 
                         const fields = parseTsFields(
-                            line.replace(/^notifytextmessage\s*/, '')
+                            line.replace(
+                                /^notifytextmessage\s*/,
+                                ''
+                            )
+                        );
+
+                        console.log(
+                            '[TS EVENT]',
+                            JSON.stringify(fields)
                         );
 
                         const name =
@@ -533,6 +565,10 @@ function openTsChat(chatId) {
                             fields.msg || '';
 
                         if (!message) continue;
+
+                        console.log(
+                            `[TS CHAT] ${name}: ${message}`
+                        );
 
                         session.messages.push({
                             name,
@@ -548,30 +584,81 @@ function openTsChat(chatId) {
                 });
 
                 stream.on('close', () => {
+
+                    console.log(
+                        '[TS QUERY] Stream cerrado'
+                    );
+
                     if (tsChatSessions[chatId]) {
                         delete tsChatSessions[chatId];
                     }
                 });
 
-                stream.on('error', () => {
+                stream.on('error', err => {
+
+                    console.error(
+                        '[TS QUERY] Stream error:',
+                        err.message
+                    );
+
                     closeTsChat(chatId);
                 });
 
-                // Seleccionar servidor virtual
-                stream.write(`use ${TS_SERVER_ID}\n`);
+                // ====================================================
+                // SELECCIONAR SERVIDOR
+                // ====================================================
+
+                console.log(
+                    `[TS QUERY] Seleccionando servidor ${TS_SERVER_ID}`
+                );
+
+                stream.write(
+                    `use ${TS_SERVER_ID}\n`
+                );
 
                 setTimeout(() => {
-                    // Solo escuchar mensajes nuevos del servidor
+
+                    // =================================================
+                    // MOVER EL CLIENTE SERVERQUERY AL CANAL
+                    // =================================================
+
+                    console.log(
+                        `[TS QUERY] Moviendo Query al canal ${TS_CHANNEL_ID}`
+                    );
+
                     stream.write(
-    `servernotifyregister event=textchannel id=${TS_CHANNEL_ID}\n`
-);
-                }, 400);
+                        `channelmove cid=${TS_CHANNEL_ID}\n`
+                    );
+
+                    setTimeout(() => {
+
+                        // =================================================
+                        // REGISTRAR EVENTOS DEL CANAL
+                        // =================================================
+
+                        console.log(
+                            `[TS QUERY] Registrando textchannel ${TS_CHANNEL_ID}`
+                        );
+
+                        stream.write(
+                            `servernotifyregister event=textchannel id=${TS_CHANNEL_ID}\n`
+                        );
+
+                    }, 500);
+
+                }, 500);
 
                 resolve();
             });
         });
 
         conn.on('error', err => {
+
+            console.error(
+                '[TS QUERY] Connection error:',
+                err.message
+            );
+
             closeTsChat(chatId);
             reject(err);
         });
@@ -587,17 +674,28 @@ function openTsChat(chatId) {
     });
 }
 
+// ============================================================
+// ENVIAR MENSAJE A TEAMSPEAK
+// ============================================================
+
 function sendTsMessage(chatId, message) {
     return new Promise((resolve, reject) => {
 
         const session = tsChatSessions[chatId];
 
         if (!session || !session.stream) {
-            return reject(new Error('Chat TeamSpeak cerrado'));
+            return reject(
+                new Error('Chat TeamSpeak cerrado')
+            );
         }
 
         const command =
-    `sendtextmessage targetmode=2 target=${TS_CHANNEL_ID} msg=${tsEscape(message)}\n`;
+            `sendtextmessage targetmode=2 target=${TS_CHANNEL_ID} msg=${tsEscape(message)}\n`;
+
+        console.log(
+            '[TS SEND]',
+            command.trim()
+        );
 
         session.stream.write(command);
 
@@ -913,12 +1011,11 @@ bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text.trim();
 
-    // No procesar comandos aquí
     if (text.startsWith('/')) return;
 
-    // --------------------------------------------------------
+    // ========================================================
     // AUTENTICACIÓN
-    // --------------------------------------------------------
+    // ========================================================
 
     if (!isAuthenticated(chatId)) {
 
@@ -968,9 +1065,9 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // --------------------------------------------------------
+    // ========================================================
     // CHAT TEAMSPEAK
-    // --------------------------------------------------------
+    // ========================================================
 
     if (tsChatSessions[chatId]) {
 
@@ -988,7 +1085,6 @@ bot.on('message', async (msg) => {
 
             await sendTsMessage(chatId, text);
 
-            // Mostrar inmediatamente nuestro propio mensaje.
             const session = tsChatSessions[chatId];
 
             session.messages.push({
@@ -1003,6 +1099,11 @@ bot.on('message', async (msg) => {
             updateChatPanel(chatId);
 
         } catch (e) {
+
+            console.error(
+                '[TS SEND ERROR]',
+                e.message
+            );
 
             await bot.sendMessage(
                 chatId,
@@ -1208,7 +1309,6 @@ bot.on('callback_query', async (query) => {
         const action = parts[1];
         const serverId = parts[2];
 
-        // Para stop/restart comprobamos usuarios de TeamSpeak
         if (action === 'stop' || action === 'restart') {
 
             const users = await getTsUsers();
@@ -1473,7 +1573,6 @@ bot.on('callback_query', async (query) => {
                 ? 'reboot'
                 : 'poweroff';
 
-        // Antes de apagar/reiniciar comprobamos TS
         const users = await getTsUsers();
 
         if (users.length > 0) {
@@ -1576,7 +1675,10 @@ async function executeSystemAction(chatId, action) {
     });
 
     conn.on('error', err => {
-        console.error('System action:', err.message);
+        console.error(
+            'System action:',
+            err.message
+        );
     });
 
     conn.connect({
@@ -1608,11 +1710,17 @@ if (process.env.STARTUP_MESSAGE_CHAT_ID) {
 // ============================================================
 
 bot.on('polling_error', error => {
-    console.error('Telegram polling:', error.message);
+    console.error(
+        'Telegram polling:',
+        error.message
+    );
 });
 
 process.on('unhandledRejection', error => {
-    console.error('Unhandled rejection:', error);
+    console.error(
+        'Unhandled rejection:',
+        error
+    );
 });
 
 console.log('🤖 Bot iniciado correctamente.');
