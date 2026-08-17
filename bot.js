@@ -5,7 +5,7 @@ const fetch = (...args) =>
     import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 // ============================================================
-// CONFIGURACIÓN
+// CONFIGURACIÓ
 // ============================================================
 
 const token = process.env.token;
