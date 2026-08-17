@@ -26,6 +26,7 @@ const TS_USER = process.env.ts_query_user || 'serveradmin';
 const TS_PASS = process.env.ts_query_pass;
 const TS_API_KEY = process.env.ts_api_key;
 const TS_SERVER_ID = Number(process.env.ts_server_id || 1);
+const TS_CHANNEL_ID = Number(process.env.ts_channel_id || 1);
 
 // ============================================================
 // BOT
@@ -562,8 +563,8 @@ function openTsChat(chatId) {
                 setTimeout(() => {
                     // Solo escuchar mensajes nuevos del servidor
                     stream.write(
-                        'servernotifyregister event=textserver\n'
-                    );
+    `servernotifyregister event=textchannel id=${TS_CHANNEL_ID}\n`
+);
                 }, 400);
 
                 resolve();
@@ -596,7 +597,7 @@ function sendTsMessage(chatId, message) {
         }
 
         const command =
-            `sendtextmessage targetmode=3 target=${TS_SERVER_ID} msg=${tsEscape(message)}\n`;
+    `sendtextmessage targetmode=2 target=${TS_CHANNEL_ID} msg=${tsEscape(message)}\n`;
 
         session.stream.write(command);
 
