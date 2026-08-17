@@ -45,7 +45,24 @@ const pendingActions = {};
 
 function escapeMarkdown(text) {
     return String(text)
-        .replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
+        .replace(/\\/g, '\\\\')
+        .replace(/_/g, '\\_')
+        .replace(/\*/g, '\\*')
+        .replace(/\[/g, '\\[')
+        .replace(/\]/g, '\\]')
+        .replace(/\(/g, '\\(')
+        .replace(/\)/g, '\\)')
+        .replace(/~/g, '\\~')
+        .replace(/>/g, '\\>')
+        .replace(/#/g, '\\#')
+        .replace(/\+/g, '\\+')
+        .replace(/-/g, '\\-')
+        .replace(/=/g, '\\=')
+        .replace(/\|/g, '\\|')
+        .replace(/{/g, '\\{')
+        .replace(/}/g, '\\}')
+        .replace(/\./g, '\\.')
+        .replace(/!/g, '\\!');
 }
 
 function drawBar(percentage, size = 10) {
