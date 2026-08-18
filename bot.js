@@ -787,13 +787,9 @@ function openTsChat(chatId) {
                 '[TS CHAT] SSH conectado'
             );
 
-            conn.shell(
-                {
-                    term: 'dumb',
-                    cols: 120,
-                    rows: 40
-                },
-                (err, stream) => {
+          conn.shell(
+    false,
+    (err, stream) => {
 
                     if (err) {
 
