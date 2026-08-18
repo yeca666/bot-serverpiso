@@ -11,10 +11,14 @@ const pteroKey = process.env.key;
 
 const sshUser = process.env.ssh_user;
 const sshPass = process.env.ssh_pass;
-const sshHost = process.env.ssh_host || 'serverpiso.duckdns.org';
+const sshHost =
+    process.env.ssh_host || 'serverpiso.duckdns.org';
 
-const ADMIN_PASSWORD = process.env.adminpassword;
-const GUEST_PASSWORD = process.env.guestpassword;
+const ADMIN_PASSWORD =
+    process.env.adminpassword;
+
+const GUEST_PASSWORD =
+    process.env.guestpassword;
 
 // ============================================================
 // TEAMSPEAK
@@ -33,9 +37,6 @@ const TS_USER =
 
 const TS_PASS =
     process.env.ts_query_pass;
-
-const TS_API_KEY =
-    process.env.ts_api_key;
 
 const TS_SERVER_ID =
     Number(process.env.ts_server_id || 1);
@@ -63,18 +64,20 @@ const pendingActions = {};
 // UTILIDADES
 // ============================================================
 
-function escapeMarkdown(text) {
-    return String(text)
-        .replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
-}
-
 function drawBar(percentage, size = 10) {
+
     const pct = Math.max(
         0,
-        Math.min(100, Number(percentage) || 0)
+        Math.min(
+            100,
+            Number(percentage) || 0
+        )
     );
 
-    const filled = Math.round((pct / 100) * size);
+    const filled =
+        Math.round(
+            (pct / 100) * size
+        );
 
     return (
         '▰'.repeat(filled) +
@@ -82,15 +85,51 @@ function drawBar(percentage, size = 10) {
     );
 }
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+// ------------------------------------------------------------
+// HTML TELEGRAM
+// ------------------------------------------------------------
+
+function escapeTelegramHtml(text) {
+
+    return String(text ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
-// ============================================================
-// QUITAR CÓDIGOS ANSI DE TEAMSPEAK
-// ============================================================
+// ------------------------------------------------------------
+// MARKDOWN TELEGRAM
+// ------------------------------------------------------------
+
+function escapeMarkdown(text) {
+
+    return String(text ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/_/g, '\\_')
+        .replace(/\*/g, '\\*')
+        .replace(/\[/g, '\\[')
+        .replace(/\]/g, '\\]')
+        .replace(/\(/g, '\\(')
+        .replace(/\)/g, '\\)')
+        .replace(/~/g, '\\~')
+        .replace(/>/g, '\\>')
+        .replace(/#/g, '\\#')
+        .replace(/\+/g, '\\+')
+        .replace(/-/g, '\\-')
+        .replace(/=/g, '\\=')
+        .replace(/\|/g, '\\|')
+        .replace(/{/g, '\\{')
+        .replace(/}/g, '\\}')
+        .replace(/\./g, '\\.')
+        .replace(/!/g, '\\!');
+}
+
+// ------------------------------------------------------------
+// ANSI
+// ------------------------------------------------------------
 
 function removeAnsi(text) {
+
     return String(text).replace(
         /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g,
         ''
@@ -98,11 +137,15 @@ function removeAnsi(text) {
 }
 
 // ============================================================
-// DECODIFICAR TEAMSPEAK
+// TEAMSPEAK DECODIFICACIÓN
 // ============================================================
 
 function decodeTs(value) {
-    if (value === undefined || value === null) {
+
+    if (
+        value === undefined ||
+        value === null
+    ) {
         return '';
     }
 
@@ -110,17 +153,26 @@ function decodeTs(value) {
 
     let result = '';
 
-    for (let i = 0; i < text.length; i++) {
+    for (
+        let i = 0;
+        i < text.length;
+        i++
+    ) {
 
         if (text[i] !== '\\') {
+
             result += text[i];
+
             continue;
         }
 
-        const next = text[i + 1];
+        const next =
+            text[i + 1];
 
         if (!next) {
+
             result += '\\';
+
             continue;
         }
 
@@ -166,10 +218,11 @@ function decodeTs(value) {
 }
 
 // ============================================================
-// ESCAPAR TEXTO PARA TEAMSPEAK
+// TEAMSPEAK ESCAPAR
 // ============================================================
 
 function tsEscape(text) {
+
     return String(text)
         .replace(/\\/g, '\\\\')
         .replace(/\|/g, '\\p')
@@ -180,7 +233,7 @@ function tsEscape(text) {
 }
 
 // ============================================================
-// PARSER DE TEAMSPEAK QUERY
+// PARSER TEAMSPEAK
 // ============================================================
 
 function parseTsFields(line) {
@@ -188,14 +241,13 @@ function parseTsFields(line) {
     const fields = {};
 
     /*
-     * TeamSpeak Query devuelve:
+     * Ejemplo real:
      *
-     * targetmode=2 msg=hola\sdesde\steamspeak invokerid=10 ...
+     * targetmode=2 msg=test invokerid=10
+     * invokername=Yeray_03 invokeruid=...
      *
-     * NO devuelve los campos separados mediante "|".
-     *
-     * Este parser encuentra cada key=value respetando
-     * los espacios escapados como \s.
+     * Los campos están separados por espacios.
+     * Los espacios internos están escapados como \s.
      */
 
     const regex =
@@ -203,30 +255,97 @@ function parseTsFields(line) {
 
     let match;
 
-    while ((match = regex.exec(line)) !== null) {
+    while (
+        (match = regex.exec(line)) !== null
+    ) {
 
-        const key = match[1];
-        const value = match[2];
-
-        fields[key] = decodeTs(value);
+        fields[match[1]] =
+            decodeTs(match[2]);
     }
 
     return fields;
 }
 
 // ============================================================
-// LIMPIAR HISTORIAL TELEGRAM
+// SPLIT DE RESPUESTAS TEAMSpeak
 // ============================================================
 
-async function limpiarHistorial(chatId, lastMsgId) {
+function splitTsPipeLine(line) {
 
-    for (let i = 0; i < 50; i++) {
+    const result = [];
+
+    let current = '';
+    let escaped = false;
+
+    for (
+        let i = 0;
+        i < line.length;
+        i++
+    ) {
+
+        const char =
+            line[i];
+
+        if (escaped) {
+
+            current +=
+                '\\' + char;
+
+            escaped = false;
+
+            continue;
+        }
+
+        if (char === '\\') {
+
+            escaped = true;
+
+            continue;
+        }
+
+        if (char === '|') {
+
+            result.push(current);
+
+            current = '';
+
+            continue;
+        }
+
+        current += char;
+    }
+
+    if (escaped) {
+        current += '\\';
+    }
+
+    result.push(current);
+
+    return result;
+}
+
+// ============================================================
+// LIMPIAR HISTORIAL
+// ============================================================
+
+async function limpiarHistorial(
+    chatId,
+    lastMsgId
+) {
+
+    for (
+        let i = 0;
+        i < 50;
+        i++
+    ) {
 
         try {
+
             await bot.deleteMessage(
                 chatId,
                 lastMsgId - i
             );
+
         } catch (e) {}
     }
 }
@@ -240,11 +359,9 @@ function isAuthenticated(chatId) {
 }
 
 function isAdmin(chatId) {
-    return authSessions[chatId]?.role === 'admin';
-}
-
-function requireAuth(chatId) {
-    return isAuthenticated(chatId);
+    return (
+        authSessions[chatId]?.role === 'admin'
+    );
 }
 
 function requireAdmin(chatId) {
@@ -252,230 +369,376 @@ function requireAdmin(chatId) {
 }
 
 // ============================================================
-// GPU
+// SSH GENÉRICO HOST
 // ============================================================
 
-async function getGpuTemperature() {
+function sshExec(command, timeout = 7000) {
 
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
 
-        const conn = new Client();
+        const conn =
+            new Client();
+
+        let settled = false;
+
+        const finishResolve = value => {
+
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+
+            try {
+                conn.end();
+            } catch (e) {}
+
+            resolve(value);
+        };
+
+        const finishReject = error => {
+
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+
+            try {
+                conn.end();
+            } catch (e) {}
+
+            reject(error);
+        };
+
+        const timer = setTimeout(() => {
+
+            finishReject(
+                new Error(
+                    'SSH timeout'
+                )
+            );
+
+        }, timeout);
 
         conn.on('ready', () => {
 
-            const command = `
-if command -v nvidia-smi >/dev/null 2>&1; then
-    nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -n 1
-else
-    sensors 2>/dev/null | grep -Ei 'amdgpu|nouveau|radeon|GPU|edge|junction' | head -n 5
-fi
-`;
+            conn.exec(
+                command,
+                (err, stream) => {
 
-            conn.exec(command, (err, stream) => {
+                    if (err) {
 
-                if (err) {
-                    conn.end();
-                    return resolve('N/D');
+                        clearTimeout(timer);
+
+                        finishReject(err);
+
+                        return;
+                    }
+
+                    let stdout = '';
+                    let stderr = '';
+
+                    stream.on(
+                        'data',
+                        data => {
+                            stdout +=
+                                data.toString();
+                        }
+                    );
+
+                    stream.stderr.on(
+                        'data',
+                        data => {
+                            stderr +=
+                                data.toString();
+                        }
+                    );
+
+                    stream.on(
+                        'close',
+                        () => {
+
+                            clearTimeout(timer);
+
+                            finishResolve({
+                                stdout,
+                                stderr
+                            });
+                        }
+                    );
                 }
-
-                let output = '';
-
-                stream.on('data', data => {
-                    output += data.toString();
-                });
-
-                stream.on('close', () => {
-
-                    conn.end();
-
-                    const nvidia =
-                        output.match(
-                            /^\s*(\d+(?:\.\d+)?)\s*$/m
-                        );
-
-                    if (nvidia) {
-                        return resolve(nvidia[1]);
-                    }
-
-                    const generic =
-                        output.match(
-                            /\+?(\d+(?:\.\d+)?)°?C/i
-                        );
-
-                    if (generic) {
-                        return resolve(generic[1]);
-                    }
-
-                    resolve('N/D');
-                });
-            });
+            );
         });
 
-        conn.on('error', () => {
-            resolve('N/D');
+        conn.on('error', error => {
+
+            clearTimeout(timer);
+
+            finishReject(error);
         });
 
         conn.connect({
-            host: sshHost,
-            port: 2222,
-            username: sshUser,
-            password: sshPass,
-            readyTimeout: 5000
+
+            host:
+                sshHost,
+
+            port:
+                2222,
+
+            username:
+                sshUser,
+
+            password:
+                sshPass,
+
+            readyTimeout:
+                5000
         });
     });
 }
 
 // ============================================================
-// ESTADÍSTICAS DEL HOST
+// MONITOR DEL HOST
 // ============================================================
 
-function getHardwareStats() {
+async function getHardwareStats() {
 
-    return new Promise((resolve, reject) => {
+    try {
 
-        const conn = new Client();
+        const command = `
+echo "__TEMP__"
+sensors 2>/dev/null
 
-        conn.on('ready', () => {
+echo "__GPU__"
+if command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -n 1
+fi
 
-            const command = `
-sensors 2>/dev/null;
-free -m;
-uptime -p;
-df -h /;
-ping -c 1 -W 2 8.8.8.8;
-ip -h -s link
+echo "__RAM__"
+free -m
+
+echo "__PING__"
+ping -c 1 -W 2 1.1.1.1 2>/dev/null
+
+echo "__UPTIME__"
+uptime -p
+
+echo "__DISK__"
+df -h /
+
+echo "__END__"
 `;
 
-            conn.exec(command, (err, stream) => {
+        const result =
+            await sshExec(
+                command,
+                9000
+            );
 
-                if (err) {
-                    conn.end();
-                    return reject(err);
-                }
+        const output =
+            result.stdout || '';
 
-                let output = '';
+        // ------------------------------------------------------
+        // CPU
+        // ------------------------------------------------------
 
-                stream
-                    .on('data', data => {
-                        output += data.toString();
-                    })
-                    .on('close', async () => {
+        let cpu = 'N/D';
 
-                        const tempMatch =
-                            output.match(
-                                /Package id 0:\s+\+([\d.]+)/
-                            );
+        const cpuMatches = [
+            output.match(
+                /Package id 0:\s+\+?([\d.]+)\s*°?C/i
+            ),
 
-                        const ramLine =
-                            output.match(
-                                /Mem:\s+(\d+)\s+(\d+)/
-                            );
+            output.match(
+                /Tctl:\s+\+?([\d.]+)\s*°?C/i
+            ),
 
-                        const uptimeMatch =
-                            output.match(
-                                /up\s+(.+)/
-                            );
+            output.match(
+                /CPU(?: Temperature| Temp)?[^+\d]*\+?([\d.]+)\s*°?C/i
+            ),
 
-                        const diskLine =
-                            output.match(
-                                /\/dev\/.*?\s+(\d+\w)\s+(\d+\w)\s+(\d+\w)\s+(\d+)%/
-                            );
+            output.match(
+                /temp1:\s+\+?([\d.]+)\s*°?C/i
+            )
+        ];
 
-                        const pingMatch =
-                            output.match(
-                                /time[=<]([\d.]+)\s*ms/
-                            );
+        for (
+            const match of cpuMatches
+        ) {
 
-                        const netMatch =
-                            output.match(
-                                /RX:\s+bytes\s+packets.*?\s+([\d.]+\w).*?TX:\s+bytes\s+packets.*?\s+([\d.]+\w)/s
-                            );
+            if (match) {
 
-                        let ramPct = '0';
+                cpu =
+                    Number(match[1])
+                        .toFixed(1);
 
-                        if (ramLine) {
+                break;
+            }
+        }
 
-                            const total =
-                                parseInt(ramLine[1]);
+        // ------------------------------------------------------
+        // GPU
+        // ------------------------------------------------------
 
-                            const used =
-                                parseInt(ramLine[2]);
+        let gpu = 'N/D';
 
-                            if (total > 0) {
+        const gpuMatch =
+            output.match(
+                /__GPU__\s*[\r\n]+([0-9]+(?:\.[0-9]+)?)/m
+            );
 
-                                ramPct =
-                                    ((used / total) * 100)
-                                        .toFixed(1);
-                            }
-                        }
+        if (gpuMatch) {
 
-                        let upTime = 'N/D';
+            gpu =
+                Number(
+                    gpuMatch[1]
+                ).toFixed(1);
+        } else {
 
-                        if (uptimeMatch) {
+            const genericGpu =
+                output.match(
+                    /(?:edge|junction|GPU)[^+\d]*\+?([\d.]+)\s*°?C/i
+                );
 
-                            upTime =
-                                uptimeMatch[1]
-                                    .replace(/days?/g, 'd')
-                                    .replace(/hours?/g, 'h')
-                                    .replace(/minutes?/g, 'm')
-                                    .replace(/seconds?/g, 's')
-                                    .replace(/,/g, '');
-                        }
+            if (genericGpu) {
 
-                        const gpu =
-                            await getGpuTemperature();
+                gpu =
+                    Number(
+                        genericGpu[1]
+                    ).toFixed(1);
+            }
+        }
 
-                        resolve({
+        // ------------------------------------------------------
+        // RAM
+        // ------------------------------------------------------
 
-                            cpu:
-                                tempMatch
-                                    ? tempMatch[1]
-                                    : 'N/D',
+        let ramPct = 'N/D';
 
-                            gpu,
+        const ramMatch =
+            output.match(
+                /__RAM__[\s\S]*?Mem:\s+(\d+)\s+(\d+)/m
+            );
 
-                            ramP:
-                                ramPct,
+        if (ramMatch) {
 
-                            up:
-                                upTime,
+            const total =
+                Number(ramMatch[1]);
 
-                            diskP:
-                                diskLine
-                                    ? diskLine[4]
-                                    : '0',
+            const used =
+                Number(ramMatch[2]);
 
-                            ping:
-                                pingMatch
-                                    ? pingMatch[1]
-                                    : 'N/D',
+            if (total > 0) {
 
-                            rx:
-                                netMatch
-                                    ? netMatch[1]
-                                    : 'N/D',
+                ramPct =
+                    (
+                        (used / total) * 100
+                    ).toFixed(1);
+            }
+        }
 
-                            tx:
-                                netMatch
-                                    ? netMatch[2]
-                                    : 'N/D'
-                        });
+        // ------------------------------------------------------
+        // PING
+        // ------------------------------------------------------
 
-                        conn.end();
-                    });
-            });
-        });
+        let ping = 'N/D';
 
-        conn.on('error', reject);
+        const pingMatch =
+            output.match(
+                /__PING__[\s\S]*?time[=<]([\d.]+)\s*ms/i
+            );
 
-        conn.connect({
-            host: sshHost,
-            port: 2222,
-            username: sshUser,
-            password: sshPass,
-            readyTimeout: 5000
-        });
-    });
+        if (pingMatch) {
+
+            ping =
+                Number(
+                    pingMatch[1]
+                ).toFixed(1);
+        }
+
+        // ------------------------------------------------------
+        // UPTIME
+        // ------------------------------------------------------
+
+        let uptime = 'N/D';
+
+        const uptimeMatch =
+            output.match(
+                /__UPTIME__\s*[\r\n]+([^\r\n]+)/m
+            );
+
+        if (uptimeMatch) {
+
+            uptime =
+                uptimeMatch[1]
+                    .trim()
+                    .replace(
+                        /days?/g,
+                        'd'
+                    )
+                    .replace(
+                        /hours?/g,
+                        'h'
+                    )
+                    .replace(
+                        /minutes?/g,
+                        'm'
+                    )
+                    .replace(
+                        /seconds?/g,
+                        's'
+                    );
+        }
+
+        // ------------------------------------------------------
+        // DISCO
+        // ------------------------------------------------------
+
+        let disk = 'N/D';
+
+        const diskMatch =
+            output.match(
+                /__DISK__[\s\S]*?\s(\d+)%\s+\/\s*$/m
+            );
+
+        if (diskMatch) {
+
+            disk =
+                Number(
+                    diskMatch[1]
+                );
+        }
+
+        return {
+
+            cpu,
+            gpu,
+            ramP: ramPct,
+            ping,
+            up: uptime,
+            diskP: disk
+
+        };
+
+    } catch (error) {
+
+        console.error(
+            '[HOST MONITOR]',
+            error.message
+        );
+
+        return {
+
+            cpu: 'N/D',
+            gpu: 'N/D',
+            ramP: 'N/D',
+            ping: 'N/D',
+            up: 'N/D',
+            diskP: 'N/D'
+
+        };
+    }
 }
 
 // ============================================================
@@ -484,74 +747,14 @@ ip -h -s link
 
 async function getServers() {
 
-    const res = await fetch(
-        `${host}/api/client`,
-        {
-            headers: {
-                Authorization:
-                    `Bearer ${pteroKey}`,
-
-                Accept:
-                    'application/json'
-            }
-        }
-    );
-
-    if (!res.ok) {
-        throw new Error(
-            `Pterodactyl HTTP ${res.status}`
-        );
-    }
-
-    const data =
-        await res.json();
-
-    return data.data || [];
-}
-
-async function powerServer(serverId, action) {
-
-    return fetch(
-        `${host}/api/client/servers/${serverId}/power`,
-        {
-            method: 'POST',
-
-            headers: {
-                Authorization:
-                    `Bearer ${pteroKey}`,
-
-                'Content-Type':
-                    'application/json',
-
-                Accept:
-                    'application/json'
-            },
-
-            body: JSON.stringify({
-                signal: action
-            })
-        }
-    );
-}
-
-// ============================================================
-// TEAMSPEAK HTTP QUERY
-// ============================================================
-
-async function tsRequest(path) {
-
-    const url =
-        `http://${TS_HOST}:10080/${TS_SERVER_ID}/${path}`;
-
-    console.log('[TS HTTP]', url);
-
     const response =
         await fetch(
-            url,
+            `${host}/api/client`,
             {
                 headers: {
-                    'x-api-key':
-                        TS_API_KEY,
+
+                    Authorization:
+                        `Bearer ${pteroKey}`,
 
                     Accept:
                         'application/json'
@@ -562,90 +765,429 @@ async function tsRequest(path) {
     if (!response.ok) {
 
         throw new Error(
-            `TeamSpeak HTTP ${response.status}`
+            `Pterodactyl HTTP ${response.status}`
         );
     }
 
-    return response.json();
+    const data =
+        await response.json();
+
+    return data.data || [];
+}
+
+async function powerServer(
+    serverId,
+    action
+) {
+
+    return fetch(
+        `${host}/api/client/servers/${serverId}/power`,
+        {
+            method:
+                'POST',
+
+            headers: {
+
+                Authorization:
+                    `Bearer ${pteroKey}`,
+
+                'Content-Type':
+                    'application/json',
+
+                Accept:
+                    'application/json'
+            },
+
+            body:
+                JSON.stringify({
+                    signal:
+                        action
+                })
+        }
+    );
 }
 
 // ============================================================
-// OBTENER USUARIOS DE TEAMSPEAK
+// SERVERQUERY SSH
+// ============================================================
+
+function tsQueryCommand(
+    commands,
+    timeout = 7000
+) {
+
+    return new Promise(
+        (resolve, reject) => {
+
+            const conn =
+                new Client();
+
+            let streamRef = null;
+            let buffer = '';
+            let outputLines = [];
+            let settled = false;
+
+            const finishResolve =
+                value => {
+
+                    if (settled) {
+                        return;
+                    }
+
+                    settled = true;
+
+                    try {
+                        if (streamRef) {
+                            streamRef.end();
+                        }
+                    } catch (e) {}
+
+                    try {
+                        conn.end();
+                    } catch (e) {}
+
+                    resolve(value);
+                };
+
+            const finishReject =
+                error => {
+
+                    if (settled) {
+                        return;
+                    }
+
+                    settled = true;
+
+                    try {
+                        conn.end();
+                    } catch (e) {}
+
+                    reject(error);
+                };
+
+            const timer =
+                setTimeout(
+                    () => {
+
+                        finishReject(
+                            new Error(
+                                'ServerQuery timeout'
+                            )
+                        );
+
+                    },
+                    timeout
+                );
+
+            conn.on('ready', () => {
+
+                conn.shell(
+                    false,
+                    (err, stream) => {
+
+                        if (err) {
+
+                            clearTimeout(
+                                timer
+                            );
+
+                            finishReject(err);
+
+                            return;
+                        }
+
+                        streamRef =
+                            stream;
+
+                        stream.on(
+                            'data',
+                            data => {
+
+                                let raw =
+                                    removeAnsi(
+                                        data.toString()
+                                    );
+
+                                buffer +=
+                                    raw;
+
+                                const lines =
+                                    buffer.split(
+                                        /\r?\n/
+                                    );
+
+                                buffer =
+                                    lines.pop() || '';
+
+                                for (
+                                    const rawLine
+                                    of lines
+                                ) {
+
+                                    const line =
+                                        rawLine.trim();
+
+                                    if (!line) {
+                                        continue;
+                                    }
+
+                                    /*
+                                     * Ignorar el prompt.
+                                     */
+
+                                    if (
+                                        line.endsWith(
+                                            '>'
+                                        ) &&
+                                        (
+                                            line.includes(
+                                                '@'
+                                            ) ||
+                                            line === '>'
+                                        )
+                                    ) {
+                                        continue;
+                                    }
+
+                                    /*
+                                     * TeamSpeak devuelve:
+                                     *
+                                     * error id=0 msg=ok
+                                     *
+                                     * al terminar un comando.
+                                     */
+
+                                    if (
+                                        line.startsWith(
+                                            'error id='
+                                        )
+                                    ) {
+
+                                        const errorFields =
+                                            parseTsFields(
+                                                line
+                                                    .replace(
+                                                        /^error\s+/,
+                                                        ''
+                                                    )
+                                            );
+
+                                        const code =
+                                            Number(
+                                                errorFields.id ||
+                                                0
+                                            );
+
+                                        if (
+                                            code !== 0
+                                        ) {
+
+                                            clearTimeout(
+                                                timer
+                                            );
+
+                                            finishReject(
+                                                new Error(
+                                                    line
+                                                )
+                                            );
+
+                                            return;
+                                        }
+
+                                        clearTimeout(
+                                            timer
+                                        );
+
+                                        finishResolve(
+                                            outputLines
+                                                .join(
+                                                    '\n'
+                                                )
+                                        );
+
+                                        return;
+                                    }
+
+                                    if (
+                                        line === 'TS3'
+                                    ) {
+                                        continue;
+                                    }
+
+                                    if (
+                                        line.startsWith(
+                                            'Welcome to the TeamSpeak'
+                                        )
+                                    ) {
+                                        continue;
+                                    }
+
+                                    outputLines.push(
+                                        line
+                                    );
+                                }
+                            }
+                        );
+
+                        stream.on(
+                            'error',
+                            error => {
+
+                                clearTimeout(
+                                    timer
+                                );
+
+                                finishReject(
+                                    error
+                                );
+                            }
+                        );
+
+                        stream.write(
+                            commands
+                        );
+
+                        if (
+                            !commands.endsWith(
+                                '\n'
+                            )
+                        ) {
+
+                            stream.write(
+                                '\n'
+                            );
+                        }
+                    }
+                );
+            });
+
+            conn.on(
+                'error',
+                error => {
+
+                    clearTimeout(
+                        timer
+                    );
+
+                    finishReject(
+                        error
+                    );
+                }
+            );
+
+            conn.connect({
+
+                host:
+                    TS_HOST,
+
+                port:
+                    TS_PORT,
+
+                username:
+                    TS_USER,
+
+                password:
+                    TS_PASS,
+
+                readyTimeout:
+                    7000,
+
+                keepaliveInterval:
+                    10000
+            });
+        }
+    );
+}
+
+// ============================================================
+// OBTENER USUARIOS TEAMSpeak
 // ============================================================
 
 async function getTsUsers() {
 
     try {
 
-        const result =
-            await tsRequest('clientlist');
-
-        console.log(
-            '[TS USERS] Respuesta:',
-            JSON.stringify(result)
-        );
-
-        if (
-            !result ||
-            !result.status ||
-            Number(result.status.code) !== 0
-        ) {
-
-            console.error(
-                '[TS USERS] Error:',
-                JSON.stringify(result)
+        const output =
+            await tsQueryCommand(
+                `use ${TS_SERVER_ID}\nclientlist\n`,
+                7000
             );
 
-            return [];
-        }
-
-        const clients =
-            Array.isArray(result.body)
-                ? result.body
-                : [];
-
         console.log(
-            '[TS USERS] Clientes encontrados:',
-            clients.length
+            '[TS USERS RAW]',
+            output
         );
 
-        const users =
-            clients.filter(client => {
+        const users = [];
 
-                const type =
-                    Number(client.client_type);
+        const chunks =
+            output
+                .split('|')
+                .map(
+                    x => x.trim()
+                )
+                .filter(Boolean);
 
-                const nickname =
-                    String(
-                        client.client_nickname || ''
-                    );
+        for (
+            const chunk of chunks
+        ) {
 
-                console.log(
-                    '[TS USERS] Cliente:',
-                    nickname,
-                    'type:',
-                    type
+            if (
+                !chunk.includes(
+                    'client_type='
+                )
+            ) {
+                continue;
+            }
+
+            const fields =
+                parseTsFields(
+                    chunk
                 );
 
-                // 0 = usuario normal
-                // 1 = ServerQuery
-                return type === 0;
-            });
+            const type =
+                Number(
+                    fields.client_type
+                );
+
+            const nickname =
+                fields.client_nickname ||
+                '';
+
+            console.log(
+                '[TS USERS]',
+                nickname,
+                'type=',
+                type
+            );
+
+            if (
+                type === 0
+            ) {
+
+                users.push({
+                    nickname,
+                    clid:
+                        fields.clid || ''
+                });
+            }
+        }
 
         console.log(
             '[TS USERS] Usuarios normales:',
             users.map(
-                u => u.client_nickname
+                u => u.nickname
             )
         );
 
         return users;
 
-    } catch (e) {
+    } catch (error) {
 
         console.error(
-            '[TS USERS] Error:',
-            e.message
+            '[TS USERS]',
+            error.message
         );
 
         return [];
@@ -653,7 +1195,7 @@ async function getTsUsers() {
 }
 
 // ============================================================
-// TEAMSPEAK CHAT
+// CHAT TEAMSPEAK
 // ============================================================
 
 function closeTsChat(chatId) {
@@ -688,44 +1230,73 @@ function closeTsChat(chatId) {
 }
 
 // ============================================================
-// ACTUALIZAR PANEL DEL CHAT
+// PANEL DEL CHAT
 // ============================================================
 
 function updateChatPanel(chatId) {
 
-    const session = tsChatSessions[chatId];
+    const session =
+        tsChatSessions[chatId];
 
-    if (!session || !session.panelId) {
+    if (
+        !session ||
+        !session.panelId
+    ) {
         return;
     }
 
     const lines =
         session.messages.length
+
             ? session.messages
                 .slice(-12)
-                .map(m => `${m.name}: ${m.text}`)
+                .map(message => {
+
+                    const name =
+                        escapeTelegramHtml(
+                            message.name
+                        );
+
+                    const text =
+                        escapeTelegramHtml(
+                            message.text
+                        );
+
+                    return (
+                        `<b>${name}</b>: ${text}`
+                    );
+                })
                 .join('\n')
+
             : '💬 Todavía no hay mensajes nuevos.';
 
     const text =
-        `💬 *CHAT TEAMSPEAK*\n` +
+        `<b>💬 CHAT TEAMSPEAK</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
         `${lines}\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
         `✏️ Escribe un mensaje y se enviará al servidor.\n` +
-        `👥 Pulsa "Usuarios conectados" para ver quién está en TeamSpeak.`;
+        `👥 Pulsa <b>Usuarios conectados</b> para ver quién está en TeamSpeak.`;
 
     const keyboard = [
+
         [
             {
-                text: '👥 Usuarios conectados',
-                callback_data: 'ts_chat_users'
+                text:
+                    '👥 Usuarios conectados',
+
+                callback_data:
+                    'ts_chat_users'
             }
         ],
+
         [
             {
-                text: '🔴 Cerrar chat',
-                callback_data: 'ts_chat_close'
+                text:
+                    '🔴 Cerrar chat',
+
+                callback_data:
+                    'ts_chat_close'
             }
         ]
     ];
@@ -733,11 +1304,19 @@ function updateChatPanel(chatId) {
     bot.editMessageText(
         text,
         {
-            chat_id: chatId,
-            message_id: session.panelId,
-            parse_mode: 'Markdown',
+
+            chat_id:
+                chatId,
+
+            message_id:
+                session.panelId,
+
+            parse_mode:
+                'HTML',
+
             reply_markup: {
-                inline_keyboard: keyboard
+                inline_keyboard:
+                    keyboard
             }
         }
     ).catch(error => {
@@ -750,409 +1329,470 @@ function updateChatPanel(chatId) {
 }
 
 // ============================================================
-// ABRIR CHAT TEAMSPEAK
+// ABRIR CHAT TEAMSpeak
 // ============================================================
 
 function openTsChat(chatId) {
 
-    return new Promise((resolve, reject) => {
+    return new Promise(
+        (resolve, reject) => {
 
-        if (tsChatSessions[chatId]) {
-            closeTsChat(chatId);
-        }
+            if (
+                tsChatSessions[chatId]
+            ) {
+                closeTsChat(chatId);
+            }
 
-        const conn =
-            new Client();
+            const conn =
+                new Client();
 
-        const session = {
+            const session = {
 
-            conn,
+                conn,
 
-            stream:
-                null,
+                stream:
+                    null,
 
-            panelId:
-                null,
+                panelId:
+                    null,
 
-            messages:
-                [],
+                messages:
+                    [],
 
-            buffer:
-                ''
-        };
+                buffer:
+                    ''
+            };
 
-        tsChatSessions[chatId] =
-            session;
+            tsChatSessions[chatId] =
+                session;
 
-        conn.on('ready', () => {
-
-            console.log(
-                '[TS CHAT] SSH conectado'
-            );
-
-          conn.shell(
-    false,
-    (err, stream) => {
-
-                    if (err) {
-
-                        closeTsChat(chatId);
-
-                        return reject(err);
-                    }
-
-                    session.stream =
-                        stream;
+            conn.on(
+                'ready',
+                () => {
 
                     console.log(
-                        '[TS CHAT] Shell abierto'
+                        '[TS CHAT] SSH conectado'
                     );
 
-                    // ====================================================
-                    // RECEPCIÓN DE DATOS
-                    // ====================================================
+                    conn.shell(
+                        false,
+                        (err, stream) => {
 
-                    stream.on('data', data => {
+                            if (err) {
 
-                        let raw =
-                            data.toString();
+                                closeTsChat(
+                                    chatId
+                                );
 
-                        console.log(
-                            '[TS RAW]',
-                            JSON.stringify(raw)
-                        );
-
-                        // Eliminar ANSI.
-                        raw =
-                            removeAnsi(raw);
-
-                        // Añadir al buffer.
-                        session.buffer += raw;
-
-                        /*
-                         * TeamSpeak puede enviar una línea completa
-                         * o partirla en varios paquetes.
-                         *
-                         * Ejemplo:
-                         *
-                         * paquete 1:
-                         * notifytextmessage targetmode=2 msg=aa
-                         *
-                         * paquete 2:
-                         * invokerid=10 invokername=Yeray_03
-                         *
-                         * Por eso NO procesamos cada data como
-                         * si fuera una línea completa.
-                         */
-
-                        const lines =
-                            session.buffer
-                                .split(/\r?\n/);
-
-                        // Guardar la última parte si está incompleta.
-                        session.buffer =
-                            lines.pop() || '';
-
-                        for (
-                            const rawLine of lines
-                        ) {
-
-                            const line =
-                                rawLine.trim();
-
-                            if (!line) {
-                                continue;
+                                return reject(
+                                    err
+                                );
                             }
 
+                            session.stream =
+                                stream;
+
                             console.log(
-                                '[TS LINE]',
-                                line
+                                '[TS CHAT] Shell abierto'
                             );
 
                             // ------------------------------------------------
-                            // EVENTO DE MENSAJE
+                            // RECEPCIÓN
                             // ------------------------------------------------
 
-                            if (
-                                line.startsWith(
-                                    'notifytextmessage'
-                                )
-                            ) {
+                            stream.on(
+                                'data',
+                                data => {
 
-                                const eventLine =
-                                    line.replace(
-                                        /^notifytextmessage\s*/,
-                                        ''
-                                    );
-
-                                console.log(
-                                    '[TS EVENT RAW]',
-                                    eventLine
-                                );
-
-                                const fields =
-                                    parseTsFields(
-                                        eventLine
-                                    );
-
-                                console.log(
-                                    '[TS EVENT PARSED]',
-                                    JSON.stringify(fields)
-                                );
-
-                                const message =
-                                    fields.msg || '';
-
-                                const name =
-                                    fields.invokername ||
-                                    fields.invokeruid ||
-                                    'Usuario';
-
-                                if (!message) {
+                                    let raw =
+                                        data.toString();
 
                                     console.log(
-                                        '[TS EVENT] Mensaje vacío'
+                                        '[TS RAW]',
+                                        JSON.stringify(
+                                            raw
+                                        )
                                     );
 
-                                    continue;
+                                    raw =
+                                        removeAnsi(
+                                            raw
+                                        );
+
+                                    session.buffer +=
+                                        raw;
+
+                                    const lines =
+                                        session.buffer
+                                            .split(
+                                                /\r?\n/
+                                            );
+
+                                    session.buffer =
+                                        lines.pop() ||
+                                        '';
+
+                                    for (
+                                        const rawLine
+                                        of lines
+                                    ) {
+
+                                        const line =
+                                            rawLine.trim();
+
+                                        if (!line) {
+                                            continue;
+                                        }
+
+                                        console.log(
+                                            '[TS LINE]',
+                                            line
+                                        );
+
+                                        if (
+                                            !line.startsWith(
+                                                'notifytextmessage'
+                                            )
+                                        ) {
+
+                                            continue;
+                                        }
+
+                                        const eventLine =
+                                            line.replace(
+                                                /^notifytextmessage\s*/,
+                                                ''
+                                            );
+
+                                        console.log(
+                                            '[TS EVENT RAW]',
+                                            eventLine
+                                        );
+
+                                        const fields =
+                                            parseTsFields(
+                                                eventLine
+                                            );
+
+                                        console.log(
+                                            '[TS EVENT PARSED]',
+                                            JSON.stringify(
+                                                fields
+                                            )
+                                        );
+
+                                        const message =
+                                            fields.msg ||
+                                            '';
+
+                                        const name =
+                                            fields.invokername ||
+                                            fields.invokeruid ||
+                                            'Usuario';
+
+                                        if (
+                                            !message
+                                        ) {
+
+                                            continue;
+                                        }
+
+                                        /*
+                                         * El mensaje que mandamos
+                                         * desde Telegram ya se añade
+                                         * como "Tú".
+                                         *
+                                         * Evitamos duplicarlo.
+                                         */
+
+                                        if (
+                                            fields.invokername ===
+                                            TS_USER
+                                        ) {
+
+                                            console.log(
+                                                '[TS EVENT] Ignorado: mensaje propio'
+                                            );
+
+                                            continue;
+                                        }
+
+                                        session.messages.push({
+
+                                            name,
+
+                                            text:
+                                                message
+                                        });
+
+                                        if (
+                                            session.messages.length >
+                                            20
+                                        ) {
+
+                                            session.messages.shift();
+                                        }
+
+                                        updateChatPanel(
+                                            chatId
+                                        );
+                                    }
                                 }
+                            );
 
-                                /*
-                                 * Los mensajes que enviamos desde
-                                 * Telegram los mostramos inmediatamente
-                                 * como "Tú".
-                                 *
-                                 * TeamSpeak también genera un evento
-                                 * notifytextmessage para ese mensaje.
-                                 *
-                                 * Lo ignoramos para evitar duplicarlo.
-                                 */
-
-                                if (
-                                    fields.invokeruid === TS_USER ||
-                                    fields.invokername === TS_USER
-                                ) {
+                            stream.on(
+                                'close',
+                                () => {
 
                                     console.log(
-                                        '[TS EVENT] Ignorado: mensaje propio ya mostrado'
+                                        '[TS CHAT] Stream cerrado'
                                     );
 
-                                    continue;
+                                    if (
+                                        tsChatSessions[
+                                            chatId
+                                        ]
+                                    ) {
+
+                                        delete tsChatSessions[
+                                            chatId
+                                        ];
+                                    }
                                 }
+                            );
 
-                                console.log(
-                                    `[TS EVENT] ${name}: ${message}`
-                                );
+                            stream.on(
+                                'error',
+                                error => {
 
-                                session.messages.push({
+                                    console.error(
+                                        '[TS STREAM ERROR]',
+                                        error.message
+                                    );
 
-                                    name:
-                                        name,
-
-                                    text:
-                                        message
-                                });
-
-                                if (
-                                    session.messages.length > 20
-                                ) {
-
-                                    session.messages.shift();
+                                    closeTsChat(
+                                        chatId
+                                    );
                                 }
+                            );
 
-                                updateChatPanel(
-                                    chatId
-                                );
-                            }
+                            // ------------------------------------------------
+                            // SELECCIONAR SERVIDOR
+                            // ------------------------------------------------
+
+                            stream.write(
+                                `use ${TS_SERVER_ID}\n`
+                            );
+
+                            console.log(
+                                `[TS CHAT] Seleccionando servidor ${TS_SERVER_ID}`
+                            );
+
+                            // ------------------------------------------------
+                            // SUSCRIBIRSE
+                            // ------------------------------------------------
+
+                            setTimeout(
+                                () => {
+
+                                    console.log(
+                                        `[TS CHAT] Suscribiendo a textchannel del canal ${TS_CHANNEL_ID}`
+                                    );
+
+                                    stream.write(
+                                        `servernotifyregister event=textchannel id=${TS_CHANNEL_ID}\n`
+                                    );
+
+                                    console.log(
+                                        '[TS CHAT] Suscripción enviada'
+                                    );
+
+                                    resolve();
+
+                                },
+                                800
+                            );
                         }
-                    });
-
-                    // ====================================================
-                    // CLOSE
-                    // ====================================================
-
-                    stream.on('close', () => {
-
-                        console.log(
-                            '[TS CHAT] Stream cerrado'
-                        );
-
-                        if (
-                            tsChatSessions[chatId]
-                        ) {
-
-                            delete tsChatSessions[
-                                chatId
-                            ];
-                        }
-                    });
-
-                    // ====================================================
-                    // ERROR
-                    // ====================================================
-
-                    stream.on('error', error => {
-
-                        console.error(
-                            '[TS STREAM ERROR]',
-                            error.message
-                        );
-
-                        closeTsChat(
-                            chatId
-                        );
-                    });
-
-                    // ====================================================
-                    // SELECCIONAR SERVIDOR
-                    // ====================================================
-
-                    stream.write(
-                        `use ${TS_SERVER_ID}\n`
                     );
-
-                    console.log(
-                        `[TS CHAT] Seleccionando servidor ${TS_SERVER_ID}`
-                    );
-
-                    // ====================================================
-                    // SUSCRIBIRSE A MENSAJES DEL CANAL
-                    // ====================================================
-
-                    setTimeout(() => {
-
-                        console.log(
-                            `[TS CHAT] Suscribiendo a textchannel del canal ${TS_CHANNEL_ID}`
-                        );
-
-                        stream.write(
-                            `servernotifyregister event=textchannel id=${TS_CHANNEL_ID}\n`
-                        );
-
-                        console.log(
-                            '[TS CHAT] Suscripción enviada'
-                        );
-
-                    }, 800);
-
-                    resolve();
                 }
             );
-        });
 
-        conn.on('error', error => {
+            conn.on(
+                'error',
+                error => {
 
-            console.error(
-                '[TS SSH ERROR]',
-                error.message
+                    console.error(
+                        '[TS SSH ERROR]',
+                        error.message
+                    );
+
+                    closeTsChat(
+                        chatId
+                    );
+
+                    reject(error);
+                }
             );
 
-            closeTsChat(chatId);
+            conn.connect({
 
-            reject(error);
-        });
+                host:
+                    TS_HOST,
 
-        conn.connect({
+                port:
+                    TS_PORT,
 
-            host:
-                TS_HOST,
+                username:
+                    TS_USER,
 
-            port:
-                TS_PORT,
+                password:
+                    TS_PASS,
 
-            username:
-                TS_USER,
+                readyTimeout:
+                    7000,
 
-            password:
-                TS_PASS,
-
-            readyTimeout:
-                7000,
-
-            keepaliveInterval:
-                10000
-        });
-    });
+                keepaliveInterval:
+                    10000
+            });
+        }
+    );
 }
 
 // ============================================================
-// ENVIAR MENSAJE A TEAMSPEAK
+// ENVIAR MENSAJE TEAMSpeak
 // ============================================================
 
-function sendTsMessage(chatId, message) {
+function sendTsMessage(
+    chatId,
+    message
+) {
 
-    return new Promise((resolve, reject) => {
+    return new Promise(
+        (resolve, reject) => {
 
-        const session =
-            tsChatSessions[chatId];
+            const session =
+                tsChatSessions[chatId];
 
-        if (
-            !session ||
-            !session.stream
-        ) {
+            if (
+                !session ||
+                !session.stream
+            ) {
 
-            return reject(
-                new Error(
-                    'Chat TeamSpeak cerrado'
-                )
-            );
-        }
+                return reject(
+                    new Error(
+                        'Chat TeamSpeak cerrado'
+                    )
+                );
+            }
 
-        const escaped =
-            tsEscape(message);
-
-        const command =
-            `sendtextmessage targetmode=2 target=${TS_CHANNEL_ID} msg=${escaped}\n`;
-
-        console.log(
-            '[TS SEND]',
-            command.trim()
-        );
-
-        try {
-
-            session.stream.write(
-                command
-            );
+            const command =
+                `sendtextmessage ` +
+                `targetmode=2 ` +
+                `target=${TS_CHANNEL_ID} ` +
+                `msg=${tsEscape(message)}\n`;
 
             console.log(
-                '[TS SEND] Comando enviado correctamente'
+                '[TS SEND]',
+                command.trim()
             );
 
-            resolve();
+            try {
 
-        } catch (error) {
+                session.stream.write(
+                    command
+                );
 
-            console.error(
-                '[TS SEND ERROR]',
-                error.message
-            );
+                resolve();
 
-            reject(error);
+            } catch (error) {
+
+                reject(error);
+            }
         }
-    });
+    );
 }
 
 // ============================================================
 // PANEL PRINCIPAL
 // ============================================================
 
-async function sendMainMenu(chatId) {
+async function sendMainMenu(
+    chatId,
+    editMessageId = null
+) {
 
     const role =
         authSessions[chatId]?.role;
+
+    const hw =
+        await getHardwareStats();
+
+    const cpu =
+        hw.cpu !== 'N/D'
+            ? `🌡️ CPU <b>${escapeTelegramHtml(hw.cpu)}°C</b>`
+            : '🌡️ CPU <b>N/D</b>';
+
+    const gpu =
+        hw.gpu !== 'N/D'
+            ? `🎮 GPU <b>${escapeTelegramHtml(hw.gpu)}°C</b>`
+            : '🎮 GPU <b>N/D</b>';
+
+    const ram =
+        hw.ramP !== 'N/D'
+            ? `🧠 RAM <b>${escapeTelegramHtml(hw.ramP)}%</b>`
+            : '🧠 RAM <b>N/D</b>';
+
+    const ping =
+        hw.ping !== 'N/D'
+            ? `📡 Ping <b>${escapeTelegramHtml(hw.ping)} ms</b>`
+            : '📡 Ping <b>N/D</b>';
+
+    const disk =
+        hw.diskP !== 'N/D'
+            ? `💾 Disco <b>${escapeTelegramHtml(hw.diskP)}%</b>`
+            : '💾 Disco <b>N/D</b>';
+
+    const uptime =
+        `⏱️ Uptime <b>${escapeTelegramHtml(hw.up)}</b>`;
+
+    const text =
+        `<b>🏠 PANEL DE CONTROL</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `👤 Acceso: <b>${
+            role === 'admin'
+                ? 'Administrador'
+                : 'Invitado'
+        }</b>\n\n` +
+
+        `<b>📊 ESTADO DEL SERVIDOR</b>\n` +
+        `${cpu}\n` +
+        `${drawBar(hw.cpu === 'N/D' ? 0 : hw.cpu)}\n\n` +
+
+        `${gpu}\n` +
+        `${ram}\n` +
+        `${drawBar(hw.ramP === 'N/D' ? 0 : hw.ramP)}\n\n` +
+
+        `${ping}\n` +
+        `${disk}\n` +
+        `${uptime}\n\n` +
+
+        `Selecciona una sección:`;
 
     const keyboard = [
 
         [
             {
-                text: '🖥️ Servidores',
+                text:
+                    '🖥️ Servidores',
+
                 callback_data:
                     'menu_servers'
             },
 
             {
-                text: '👥 TeamSpeak',
+                text:
+                    '👥 TeamSpeak',
+
                 callback_data:
                     'menu_ts'
             }
@@ -1160,75 +1800,85 @@ async function sendMainMenu(chatId) {
 
         [
             {
-                text: '💬 Chat TeamSpeak',
+                text:
+                    '💬 Chat TeamSpeak',
+
                 callback_data:
                     'menu_chat'
             },
 
             {
-                text: '📊 Monitor',
+                text:
+                    '🔄 Actualizar estado',
+
                 callback_data:
-                    'menu_monitor'
+                    'menu_home'
             }
         ]
     ];
 
-    if (role === 'admin') {
+    if (
+        role === 'admin'
+    ) {
 
         keyboard.push([
 
             {
-                text: '🔥 Top procesos',
-                callback_data:
-                    'sys_top'
-            },
+                text:
+                    '🛰️ Reiniciar PC',
 
-            {
-                text: '🚀 Speedtest',
-                callback_data:
-                    'sys_speedtest'
-            }
-        ]);
-
-        keyboard.push([
-
-            {
-                text: '🛰️ Reiniciar PC',
                 callback_data:
                     'sys_reboot'
             },
 
             {
-                text: '💀 Apagar PC',
+                text:
+                    '💀 Apagar PC',
+
                 callback_data:
                     'sys_poweroff'
             }
         ]);
     }
 
-    await bot.sendMessage(
+    const options = {
 
-        chatId,
+        parse_mode:
+            'HTML',
 
-        `🏠 *PANEL DE CONTROL*\n` +
-        `━━━━━━━━━━━━━━━━━━━━\n` +
-        `👤 Acceso: *${role === 'admin' ? 'Administrador' : 'Invitado'}*\n\n` +
-        `Selecciona una sección:`,
-
-        {
-            parse_mode:
-                'Markdown',
-
-            reply_markup: {
-                inline_keyboard:
-                    keyboard
-            }
+        reply_markup: {
+            inline_keyboard:
+                keyboard
         }
-    );
+    };
+
+    if (editMessageId) {
+
+        await bot.editMessageText(
+            text,
+            {
+                chat_id:
+                    chatId,
+
+                message_id:
+                    editMessageId,
+
+                ...options
+            }
+        );
+
+    } else {
+
+        await bot.sendMessage(
+            chatId,
+            text,
+            options
+        );
+    }
 }
 
 // ============================================================
-// SERVIDORES
+// SERVIDORES PTERODACTYL
 // ============================================================
 
 async function showServers(
@@ -1241,7 +1891,10 @@ async function showServers(
 
     let online = 0;
 
-    for (const server of servers) {
+    for (
+        const server
+        of servers
+    ) {
 
         const state =
             server.attributes?.current_state ||
@@ -1258,18 +1911,26 @@ async function showServers(
     }
 
     let text =
-        `🖥️ *SERVIDORES  ${online}/${servers.length}*\n` +
+        `<b>🖥️ SERVIDORES ${online}/${servers.length}</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     const keyboard = [];
 
-    for (const server of servers) {
+    for (
+        const server
+        of servers
+    ) {
 
         const a =
             server.attributes;
 
         const id =
             a.identifier;
+
+        const name =
+            escapeTelegramHtml(
+                a.name
+            );
 
         const running =
             a.current_state === 'running' ||
@@ -1282,7 +1943,7 @@ async function showServers(
                 : '🔴';
 
         text +=
-            `${icon} *${escapeMarkdown(a.name)}*\n` +
+            `${icon} <b>${name}</b>\n` +
             `${running ? 'ONLINE' : 'OFFLINE'}\n\n`;
 
         if (running) {
@@ -1343,7 +2004,7 @@ async function showServers(
     const options = {
 
         parse_mode:
-            'Markdown',
+            'HTML',
 
         reply_markup: {
             inline_keyboard:
@@ -1377,121 +2038,86 @@ async function showServers(
 }
 
 // ============================================================
-// USUARIOS TEAMSPEAK
+// LISTA DE USUARIOS TS
 // ============================================================
 
-async function showTsUsers(chatId) {
+async function showTsUsers(
+    chatId,
+    returnToChat = false
+) {
 
     const users =
         await getTsUsers();
 
     let text =
-        `👥 *TEAMSPEAK*\n` +
-        `━━━━━━━━━━━━━━━━━━━━\n`;
+        `<b>👥 USUARIOS CONECTADOS</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-    if (!users.length) {
+    if (
+        users.length === 0
+    ) {
 
         text +=
-            `\n😴 No hay usuarios conectados.`;
+            `😴 No hay usuarios normales conectados.\n\n` +
+            `💡 Los usuarios ServerQuery no aparecen en esta lista.`;
 
     } else {
 
-        text += '\n';
-
-        users.forEach(
-            (user, index) => {
-
-                text +=
-                    `${index + 1}. 🟢 *${escapeMarkdown(user.client_nickname)}*\n`;
-            }
-        );
+        text +=
+            users
+                .map(
+                    (user, index) =>
+                        `${index + 1}. 🟢 <b>${escapeTelegramHtml(user.nickname)}</b>`
+                )
+                .join('\n');
     }
 
-    await bot.sendMessage(
+    const keyboard = [];
 
-        chatId,
+    if (returnToChat) {
 
-        text,
+        keyboard.push([
 
-        {
-            parse_mode:
-                'Markdown',
+            {
+                text:
+                    '💬 Volver al chat',
 
-            reply_markup: {
-
-                inline_keyboard: [
-
-                    [
-
-                        {
-                            text:
-                                '🔄 Actualizar',
-
-                            callback_data:
-                                'menu_ts'
-                        },
-
-                        {
-                            text:
-                                '💬 Abrir chat',
-
-                            callback_data:
-                                'menu_chat'
-                        }
-                    ],
-
-                    [
-
-                        {
-                            text:
-                                '◀️ Volver',
-
-                            callback_data:
-                                'menu_home'
-                        }
-                    ]
-                ]
+                callback_data:
+                    'menu_chat'
             }
+        ]);
+    } else {
+
+        keyboard.push([
+
+            {
+                text:
+                    '🔄 Actualizar',
+
+                callback_data:
+                    'menu_ts'
+            },
+
+            {
+                text:
+                    '💬 Abrir chat',
+
+                callback_data:
+                    'menu_chat'
+            }
+        ]);
+    }
+
+    keyboard.push([
+
+        {
+            text:
+                '◀️ Volver',
+
+            callback_data:
+                'menu_home'
         }
-    );
-}
-
-// ============================================================
-// MONITOR
-// ============================================================
-
-async function showMonitor(chatId) {
-
-    const hw =
-        await getHardwareStats();
-
-    const cpu =
-        Number(hw.cpu) || 0;
-
-    const ram =
-        Number(hw.ramP) || 0;
-
-    const disk =
-        Number(hw.diskP) || 0;
-
-    const text =
-        `📊 *HOST MONITOR*\n` +
-        `━━━━━━━━━━━━━━━━━━━━\n\n` +
-
-        `🌡️ *CPU:* \`${hw.cpu}°C\`\n` +
-        `${drawBar(cpu)}\n\n` +
-
-        `🎮 *GPU:* \`${hw.gpu === 'N/D' ? 'N/D' : hw.gpu + '°C'}\`\n\n` +
-
-        `📟 *RAM:* \`${hw.ramP}%\`\n` +
-        `${drawBar(ram)}\n\n` +
-
-        `💾 *DISCO:* \`${hw.diskP}%\`\n` +
-        `${drawBar(disk)}\n\n` +
-
-        `⏱️ *UPTIME:* \`${hw.up}\`\n` +
-        `🌐 *PING:* \`${hw.ping} ms\`\n` +
-        `⬇️ \`${hw.rx}\`   ⬆️ \`${hw.tx}\``;
+    ]);
 
     await bot.sendMessage(
 
@@ -1501,34 +2127,11 @@ async function showMonitor(chatId) {
 
         {
             parse_mode:
-                'Markdown',
+                'HTML',
 
             reply_markup: {
-
-                inline_keyboard: [
-
-                    [
-
-                        {
-                            text:
-                                '🔄 Actualizar',
-
-                            callback_data:
-                                'menu_monitor'
-                        }
-                    ],
-
-                    [
-
-                        {
-                            text:
-                                '◀️ Volver',
-
-                            callback_data:
-                                'menu_home'
-                        }
-                    ]
-                ]
+                inline_keyboard:
+                    keyboard
             }
         }
     );
@@ -1550,30 +2153,34 @@ bot.onText(
             msg.message_id
         );
 
-        if (!isAuthenticated(chatId)) {
+        if (
+            !isAuthenticated(chatId)
+        ) {
 
             await bot.sendMessage(
 
                 chatId,
 
-                `🔐 *ACCESO AL PANEL*\n\n` +
+                `🔐 <b>ACCESO AL PANEL</b>\n\n` +
                 `Introduce la contraseña de invitado o administrador:`,
 
                 {
                     parse_mode:
-                        'Markdown'
+                        'HTML'
                 }
             );
 
             return;
         }
 
-        await sendMainMenu(chatId);
+        await sendMainMenu(
+            chatId
+        );
     }
 );
 
 // ============================================================
-// MENSAJES DE TELEGRAM
+// MENSAJES
 // ============================================================
 
 bot.on(
@@ -1590,29 +2197,38 @@ bot.on(
         const text =
             msg.text.trim();
 
-        // No procesar comandos.
-        if (text.startsWith('/')) {
+        if (
+            text.startsWith('/')
+        ) {
             return;
         }
 
-        // ====================================================
+        // ------------------------------------------------------
         // AUTENTICACIÓN
-        // ====================================================
+        // ------------------------------------------------------
 
-        if (!isAuthenticated(chatId)) {
+        if (
+            !isAuthenticated(chatId)
+        ) {
 
-            if (text === ADMIN_PASSWORD) {
+            if (
+                text === ADMIN_PASSWORD
+            ) {
 
                 authSessions[chatId] = {
-                    role: 'admin'
+                    role:
+                        'admin'
                 };
 
                 await bot.sendMessage(
+
                     chatId,
-                    `🔓 *Acceso de administrador concedido.*`,
+
+                    `🔓 <b>Acceso de administrador concedido.</b>`,
+
                     {
                         parse_mode:
-                            'Markdown'
+                            'HTML'
                     }
                 );
 
@@ -1623,18 +2239,24 @@ bot.on(
                 return;
             }
 
-            if (text === GUEST_PASSWORD) {
+            if (
+                text === GUEST_PASSWORD
+            ) {
 
                 authSessions[chatId] = {
-                    role: 'guest'
+                    role:
+                        'guest'
                 };
 
                 await bot.sendMessage(
+
                     chatId,
-                    `🔓 *Acceso de invitado concedido.*`,
+
+                    `🔓 <b>Acceso de invitado concedido.</b>`,
+
                     {
                         parse_mode:
-                            'Markdown'
+                            'HTML'
                     }
                 );
 
@@ -1647,23 +2269,27 @@ bot.on(
 
             await bot.sendMessage(
                 chatId,
-                `❌ Contraseña incorrecta.`
+                '❌ Contraseña incorrecta.'
             );
 
             return;
         }
 
-        // ====================================================
-        // CHAT TEAMSPEAK
-        // ====================================================
+        // ------------------------------------------------------
+        // CHAT TEAMSpeak
+        // ------------------------------------------------------
 
-        if (tsChatSessions[chatId]) {
+        if (
+            tsChatSessions[chatId]
+        ) {
 
-            if (text.length > 300) {
+            if (
+                text.length > 300
+            ) {
 
                 await bot.sendMessage(
                     chatId,
-                    `⚠️ El mensaje es demasiado largo. Máximo 300 caracteres.`
+                    '⚠️ El mensaje es demasiado largo. Máximo 300 caracteres.'
                 );
 
                 return;
@@ -1676,7 +2302,6 @@ bot.on(
                     text
                 );
 
-                // Mostrar inmediatamente nuestro propio mensaje.
                 const session =
                     tsChatSessions[chatId];
 
@@ -1700,16 +2325,16 @@ bot.on(
                     chatId
                 );
 
-            } catch (e) {
+            } catch (error) {
 
                 console.error(
                     '[TELEGRAM -> TS]',
-                    e.message
+                    error.message
                 );
 
                 await bot.sendMessage(
                     chatId,
-                    `❌ No se pudo enviar el mensaje a TeamSpeak.`
+                    '❌ No se pudo enviar el mensaje a TeamSpeak.'
                 );
             }
         }
@@ -1738,10 +2363,12 @@ bot.on(
         ).catch(() => {});
 
         // ====================================================
-        // MENÚ
+        // HOME / PANEL
         // ====================================================
 
-        if (data === 'menu_home') {
+        if (
+            data === 'menu_home'
+        ) {
 
             await sendMainMenu(
                 chatId
@@ -1750,7 +2377,13 @@ bot.on(
             return;
         }
 
-        if (data === 'menu_servers') {
+        // ====================================================
+        // SERVIDORES
+        // ====================================================
+
+        if (
+            data === 'menu_servers'
+        ) {
 
             try {
 
@@ -1759,23 +2392,29 @@ bot.on(
                     messageId
                 );
 
-            } catch (e) {
+            } catch (error) {
 
                 console.error(
-                    'Pterodactyl:',
-                    e.message
+                    '[PTERODACTYL]',
+                    error.message
                 );
 
                 await bot.sendMessage(
                     chatId,
-                    `🔴 No se pudo consultar Pterodactyl.`
+                    '🔴 No se pudo consultar Pterodactyl.'
                 );
             }
 
             return;
         }
 
-        if (data === 'menu_ts') {
+        // ====================================================
+        // TEAMSPEAK
+        // ====================================================
+
+        if (
+            data === 'menu_ts'
+        ) {
 
             try {
 
@@ -1783,40 +2422,16 @@ bot.on(
                     chatId
                 );
 
-            } catch (e) {
+            } catch (error) {
 
                 console.error(
-                    'TeamSpeak users:',
-                    e.message
+                    '[TS USERS]',
+                    error.message
                 );
 
                 await bot.sendMessage(
                     chatId,
-                    `🔴 No se pudo consultar TeamSpeak.`
-                );
-            }
-
-            return;
-        }
-
-        if (data === 'menu_monitor') {
-
-            try {
-
-                await showMonitor(
-                    chatId
-                );
-
-            } catch (e) {
-
-                console.error(
-                    'Monitor:',
-                    e.message
-                );
-
-                await bot.sendMessage(
-                    chatId,
-                    `🔴 No se pudo obtener el monitor del host.`
+                    '🔴 No se pudo consultar TeamSpeak.'
                 );
             }
 
@@ -1824,16 +2439,34 @@ bot.on(
         }
 
         // ====================================================
-        // ABRIR CHAT TEAMSPEAK
+        // CHAT
         // ====================================================
 
-        if (data === 'menu_chat') {
+        if (
+            data === 'menu_chat'
+        ) {
 
             try {
+
+                if (
+                    tsChatSessions[chatId]
+                ) {
+
+                    tsChatSessions[
+                        chatId
+                    ].panelId =
+                        messageId;
+
+                    updateChatPanel(
+                        chatId
+                    );
+
+                    return;
+                }
 
                 await bot.editMessageText(
 
-                    `💬 *Conectando al chat de TeamSpeak...*\n\n` +
+                    `💬 <b>Conectando al chat de TeamSpeak...</b>\n\n` +
                     `⏳ Abriendo conexión en tiempo real...`,
 
                     {
@@ -1844,7 +2477,7 @@ bot.on(
                             messageId,
 
                         parse_mode:
-                            'Markdown'
+                            'HTML'
                     }
                 );
 
@@ -1861,11 +2494,11 @@ bot.on(
                     chatId
                 );
 
-            } catch (e) {
+            } catch (error) {
 
                 console.error(
-                    'TS CHAT:',
-                    e
+                    '[TS CHAT]',
+                    error
                 );
 
                 closeTsChat(
@@ -1874,7 +2507,7 @@ bot.on(
 
                 await bot.editMessageText(
 
-                    `🔴 *No se pudo conectar al chat de TeamSpeak.*\n\n` +
+                    `🔴 <b>No se pudo conectar al chat de TeamSpeak.</b>\n\n` +
                     `Comprueba que el puerto ${TS_PORT} esté accesible desde Northflank.`,
 
                     {
@@ -1885,14 +2518,13 @@ bot.on(
                             messageId,
 
                         parse_mode:
-                            'Markdown',
+                            'HTML',
 
                         reply_markup: {
 
                             inline_keyboard: [
 
                                 [
-
                                     {
                                         text:
                                             '◀️ Volver',
@@ -1914,7 +2546,9 @@ bot.on(
         // CERRAR CHAT
         // ====================================================
 
-        if (data === 'ts_chat_close') {
+        if (
+            data === 'ts_chat_close'
+        ) {
 
             closeTsChat(
                 chatId
@@ -1922,7 +2556,7 @@ bot.on(
 
             await bot.editMessageText(
 
-                `💬 *Chat TeamSpeak cerrado.*`,
+                `💬 <b>Chat TeamSpeak cerrado.</b>`,
 
                 {
                     chat_id:
@@ -1932,14 +2566,13 @@ bot.on(
                         messageId,
 
                     parse_mode:
-                        'Markdown',
+                        'HTML',
 
                     reply_markup: {
 
                         inline_keyboard: [
 
                             [
-
                                 {
                                     text:
                                         '💬 Volver a abrir',
@@ -1950,7 +2583,6 @@ bot.on(
                             ],
 
                             [
-
                                 {
                                     text:
                                         '◀️ Menú',
@@ -1968,41 +2600,16 @@ bot.on(
         }
 
         // ====================================================
-        // USUARIOS DESDE CHAT
+        // USUARIOS DESDE EL CHAT
         // ====================================================
 
-        if (data === 'ts_chat_users') {
+        if (
+            data === 'ts_chat_users'
+        ) {
 
-            const users =
-                await getTsUsers();
-
-            let usersText =
-                `👥 *USUARIOS CONECTADOS*\n` +
-                `━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-            if (!users.length) {
-
-                usersText +=
-                    `😴 Nadie conectado.`;
-
-            } else {
-
-                usersText +=
-                    users
-                        .map(
-                            (u, i) =>
-                                `${i + 1}. 🟢 ${escapeMarkdown(u.client_nickname)}`
-                        )
-                        .join('\n');
-            }
-
-            await bot.sendMessage(
+            await showTsUsers(
                 chatId,
-                usersText,
-                {
-                    parse_mode:
-                        'Markdown'
-                }
+                true
             );
 
             return;
@@ -2012,13 +2619,17 @@ bot.on(
         // ACCIONES SERVIDORES
         // ====================================================
 
-        if (data.startsWith('srv_')) {
+        if (
+            data.startsWith('srv_')
+        ) {
 
-            if (!requireAdmin(chatId)) {
+            if (
+                !requireAdmin(chatId)
+            ) {
 
                 await bot.sendMessage(
                     chatId,
-                    `🔒 Esta acción requiere permisos de administrador.`
+                    '🔒 Esta acción requiere permisos de administrador.'
                 );
 
                 return;
@@ -2041,7 +2652,9 @@ bot.on(
                 const users =
                     await getTsUsers();
 
-                if (users.length > 0) {
+                if (
+                    users.length > 0
+                ) {
 
                     pendingActions[
                         chatId
@@ -2059,10 +2672,13 @@ bot.on(
 
                     const names =
                         users
-                            .slice(0, 8)
+                            .slice(
+                                0,
+                                8
+                            )
                             .map(
-                                u =>
-                                    `• ${escapeMarkdown(u.client_nickname)}`
+                                user =>
+                                    `• ${escapeTelegramHtml(user.nickname)}`
                             )
                             .join('\n');
 
@@ -2070,21 +2686,20 @@ bot.on(
 
                         chatId,
 
-                        `⚠️ *HAY USUARIOS CONECTADOS*\n\n` +
-                        `TeamSpeak tiene actualmente *${users.length}* usuario(s):\n\n` +
+                        `⚠️ <b>HAY USUARIOS CONECTADOS</b>\n\n` +
+                        `TeamSpeak tiene actualmente <b>${users.length}</b> usuario(s):\n\n` +
                         `${names}\n\n` +
                         `¿Quieres continuar con la operación?`,
 
                         {
                             parse_mode:
-                                'Markdown',
+                                'HTML',
 
                             reply_markup: {
 
                                 inline_keyboard: [
 
                                     [
-
                                         {
                                             text:
                                                 '⚠️ Sí, continuar',
@@ -2112,16 +2727,18 @@ bot.on(
 
             try {
 
-                const res =
+                const response =
                     await powerServer(
                         serverId,
                         action
                     );
 
-                if (!res.ok) {
+                if (
+                    !response.ok
+                ) {
 
                     throw new Error(
-                        `HTTP ${res.status}`
+                        `HTTP ${response.status}`
                     );
                 }
 
@@ -2129,24 +2746,24 @@ bot.on(
 
                     chatId,
 
-                    `✅ *${action.toUpperCase()}* enviado correctamente.`,
+                    `✅ <b>${escapeTelegramHtml(action.toUpperCase())}</b> enviado correctamente.`,
 
                     {
                         parse_mode:
-                            'Markdown'
+                            'HTML'
                     }
                 );
 
-            } catch (e) {
+            } catch (error) {
 
                 console.error(
-                    'Server action:',
-                    e.message
+                    '[SERVER ACTION]',
+                    error.message
                 );
 
                 await bot.sendMessage(
                     chatId,
-                    `❌ Error al ejecutar la acción.`
+                    '❌ Error al ejecutar la acción.'
                 );
             }
 
@@ -2154,12 +2771,16 @@ bot.on(
         }
 
         // ====================================================
-        // CONFIRMAR SERVIDOR
+        // CONFIRMAR SERVER
         // ====================================================
 
-        if (data === 'confirm_server') {
+        if (
+            data === 'confirm_server'
+        ) {
 
-            if (!requireAdmin(chatId)) {
+            if (
+                !requireAdmin(chatId)
+            ) {
                 return;
             }
 
@@ -2170,7 +2791,7 @@ bot.on(
 
                 await bot.sendMessage(
                     chatId,
-                    `⚠️ La operación ya no está disponible.`
+                    '⚠️ La operación ya no está disponible.'
                 );
 
                 return;
@@ -2182,13 +2803,15 @@ bot.on(
 
             try {
 
-                const res =
+                const response =
                     await powerServer(
                         pending.serverId,
                         pending.action
                     );
 
-                if (!res.ok) {
+                if (
+                    !response.ok
+                ) {
                     throw new Error();
                 }
 
@@ -2196,19 +2819,21 @@ bot.on(
 
                     chatId,
 
-                    `✅ *${pending.action.toUpperCase()}* enviado.`,
+                    `✅ <b>${escapeTelegramHtml(
+                        pending.action.toUpperCase()
+                    )}</b> enviado.`,
 
                     {
                         parse_mode:
-                            'Markdown'
+                            'HTML'
                     }
                 );
 
-            } catch (e) {
+            } catch (error) {
 
                 await bot.sendMessage(
                     chatId,
-                    `❌ No se pudo ejecutar la operación.`
+                    '❌ No se pudo ejecutar la operación.'
                 );
             }
 
@@ -2219,7 +2844,9 @@ bot.on(
         // CANCELAR
         // ====================================================
 
-        if (data === 'cancel_action') {
+        if (
+            data === 'cancel_action'
+        ) {
 
             delete pendingActions[
                 chatId
@@ -2227,174 +2854,8 @@ bot.on(
 
             await bot.sendMessage(
                 chatId,
-                `❌ Operación cancelada.`
+                '❌ Operación cancelada.'
             );
-
-            return;
-        }
-
-        // ====================================================
-        // TOP PROCESOS
-        // ====================================================
-
-        if (data === 'sys_top') {
-
-            if (!requireAdmin(chatId)) {
-                return;
-            }
-
-            const conn =
-                new Client();
-
-            conn.on('ready', () => {
-
-                conn.exec(
-                    'ps -eo pcpu,comm --sort=-pcpu | head -n 6',
-                    (err, stream) => {
-
-                        if (err) {
-
-                            conn.end();
-
-                            return;
-                        }
-
-                        let result =
-                            '';
-
-                        stream
-                            .on(
-                                'data',
-                                d =>
-                                    result += d.toString()
-                            )
-                            .on(
-                                'close',
-                                () => {
-
-                                    bot.sendMessage(
-
-                                        chatId,
-
-                                        `🔥 *TOP PROCESOS*\n\n` +
-                                        `\`\`\`\n${result}\`\`\``,
-
-                                        {
-                                            parse_mode:
-                                                'Markdown'
-                                        }
-                                    );
-
-                                    conn.end();
-                                }
-                            );
-                    }
-                );
-            });
-
-            conn.connect({
-
-                host:
-                    sshHost,
-
-                port:
-                    2222,
-
-                username:
-                    sshUser,
-
-                password:
-                    sshPass
-            });
-
-            return;
-        }
-
-        // ====================================================
-        // SPEEDTEST
-        // ====================================================
-
-        if (data === 'sys_speedtest') {
-
-            if (!requireAdmin(chatId)) {
-                return;
-            }
-
-            const testing =
-                await bot.sendMessage(
-
-                    chatId,
-
-                    `🌐 Ejecutando Speedtest...\n⏳ Puede tardar unos segundos.`
-                );
-
-            const conn =
-                new Client();
-
-            conn.on('ready', () => {
-
-                conn.exec(
-                    'speedtest-cli --simple',
-                    (err, stream) => {
-
-                        if (err) {
-
-                            conn.end();
-
-                            return;
-                        }
-
-                        let result =
-                            '';
-
-                        stream
-                            .on(
-                                'data',
-                                d =>
-                                    result += d.toString()
-                            )
-                            .on(
-                                'close',
-                                () => {
-
-                                    bot.editMessageText(
-
-                                        `🚀 *SPEEDTEST*\n\n` +
-                                        `\`\`\`\n${result}\`\`\``,
-
-                                        {
-                                            chat_id:
-                                                chatId,
-
-                                            message_id:
-                                                testing.message_id,
-
-                                            parse_mode:
-                                                'Markdown'
-                                        }
-                                    );
-
-                                    conn.end();
-                                }
-                            );
-                    }
-                );
-            });
-
-            conn.connect({
-
-                host:
-                    sshHost,
-
-                port:
-                    2222,
-
-                username:
-                    sshUser,
-
-                password:
-                    sshPass
-            });
 
             return;
         }
@@ -2408,7 +2869,9 @@ bot.on(
             data === 'sys_poweroff'
         ) {
 
-            if (!requireAdmin(chatId)) {
+            if (
+                !requireAdmin(chatId)
+            ) {
                 return;
             }
 
@@ -2420,7 +2883,9 @@ bot.on(
             const users =
                 await getTsUsers();
 
-            if (users.length > 0) {
+            if (
+                users.length > 0
+            ) {
 
                 pendingActions[
                     chatId
@@ -2436,10 +2901,13 @@ bot.on(
 
                 const names =
                     users
-                        .slice(0, 8)
+                        .slice(
+                            0,
+                            8
+                        )
                         .map(
-                            u =>
-                                `• ${escapeMarkdown(u.client_nickname)}`
+                            user =>
+                                `• ${escapeTelegramHtml(user.nickname)}`
                         )
                         .join('\n');
 
@@ -2447,21 +2915,24 @@ bot.on(
 
                     chatId,
 
-                    `⚠️ *USUARIOS CONECTADOS A TEAMSPEAK*\n\n` +
+                    `⚠️ <b>USUARIOS CONECTADOS A TEAMSPEAK</b>\n\n` +
                     `${names}\n\n` +
-                    `Hay *${users.length}* usuario(s) conectado(s).\n\n` +
-                    `¿Seguro que quieres ${action === 'reboot' ? 'reiniciar' : 'apagar'} el PC?`,
+                    `Hay <b>${users.length}</b> usuario(s) conectado(s).\n\n` +
+                    `¿Seguro que quieres ${
+                        action === 'reboot'
+                            ? 'reiniciar'
+                            : 'apagar'
+                    } el PC?`,
 
                     {
                         parse_mode:
-                            'Markdown',
+                            'HTML',
 
                         reply_markup: {
 
                             inline_keyboard: [
 
                                 [
-
                                     {
                                         text:
                                             '⚠️ Continuar',
@@ -2498,9 +2969,13 @@ bot.on(
         // CONFIRMAR SISTEMA
         // ====================================================
 
-        if (data === 'confirm_system') {
+        if (
+            data === 'confirm_system'
+        ) {
 
-            if (!requireAdmin(chatId)) {
+            if (
+                !requireAdmin(chatId)
+            ) {
                 return;
             }
 
@@ -2529,7 +3004,7 @@ bot.on(
 );
 
 // ============================================================
-// EJECUTAR REBOOT / POWEROFF
+// REBOOT / POWEROFF
 // ============================================================
 
 async function executeSystemAction(
@@ -2541,81 +3016,105 @@ async function executeSystemAction(
 
         chatId,
 
-        `⚠️ Ejecutando *${action}*...`,
+        `⚠️ Ejecutando <b>${escapeTelegramHtml(action)}</b>...`,
 
         {
             parse_mode:
-                'Markdown'
+                'HTML'
         }
     );
 
-    const conn =
-        new Client();
+    try {
 
-    conn.on('ready', () => {
-
-        conn.exec(
+        await sshExec(
             `sudo ${action}`,
-            () => {
-
-                setTimeout(
-                    () => {
-                        conn.end();
-                    },
-                    1000
-                );
-            }
+            5000
         );
-    });
 
-    conn.on('error', error => {
+    } catch (error) {
+
+        /*
+         * Puede ocurrir que la máquina se apague/reinicie
+         * antes de que SSH pueda devolver una respuesta.
+         */
 
         console.error(
-            'System action:',
+            '[SYSTEM ACTION]',
             error.message
         );
-    });
-
-    conn.connect({
-
-        host:
-            sshHost,
-
-        port:
-            2222,
-
-        username:
-            sshUser,
-
-        password:
-            sshPass
-    });
+    }
 }
 
 // ============================================================
 // AVISO DE ARRANQUE
 // ============================================================
 
-if (
-    process.env.STARTUP_MESSAGE_CHAT_ID
-) {
+async function sendStartupMessage() {
 
-    bot.sendMessage(
+    const chatId =
+        process.env.STARTUP_MESSAGE_CHAT_ID;
 
-        process.env.STARTUP_MESSAGE_CHAT_ID,
+    if (!chatId) {
+        return;
+    }
 
-        `✅ *SISTEMA ONLINE*\n` +
-        `El bot de monitorización está operativo.`,
+    const hw =
+        await getHardwareStats();
 
-        {
-            parse_mode:
-                'Markdown'
-        }
-    ).catch(() => {});
+    const cpu =
+        hw.cpu !== 'N/D'
+            ? `🌡️ CPU: <b>${escapeTelegramHtml(hw.cpu)}°C</b>`
+            : `🌡️ CPU: <b>N/D</b>`;
+
+    const gpu =
+        hw.gpu !== 'N/D'
+            ? `🎮 GPU: <b>${escapeTelegramHtml(hw.gpu)}°C</b>`
+            : `🎮 GPU: <b>N/D</b>`;
+
+    const ram =
+        hw.ramP !== 'N/D'
+            ? `🧠 RAM: <b>${escapeTelegramHtml(hw.ramP)}%</b>`
+            : `🧠 RAM: <b>N/D</b>`;
+
+    const ping =
+        hw.ping !== 'N/D'
+            ? `📡 Ping: <b>${escapeTelegramHtml(hw.ping)} ms</b>`
+            : `📡 Ping: <b>N/D</b>`;
+
+    const text =
+        `<b>✅ SISTEMA ONLINE</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `${cpu}\n` +
+        `${gpu}\n` +
+        `${ram}\n` +
+        `${ping}\n\n` +
+        `🤖 El bot de monitorización está operativo.`;
+
+    try {
+
+        await bot.sendMessage(
+
+            chatId,
+
+            text,
+
+            {
+                parse_mode:
+                    'HTML'
+            }
+        );
+
+    } catch (error) {
+
+        console.error(
+            '[STARTUP MESSAGE]',
+            error.message
+        );
+    }
 }
 
 // ============================================================
-// ERRORES
+// ERRORES TELEGRAM
 // ============================================================
 
 bot.on(
@@ -2623,18 +3122,22 @@ bot.on(
     error => {
 
         console.error(
-            'Telegram polling:',
+            '[TELEGRAM POLLING]',
             error.message
         );
     }
 );
+
+// ============================================================
+// ERRORES GLOBAL
+// ============================================================
 
 process.on(
     'unhandledRejection',
     error => {
 
         console.error(
-            'Unhandled rejection:',
+            '[UNHANDLED REJECTION]',
             error
         );
     }
@@ -2645,12 +3148,29 @@ process.on(
     error => {
 
         console.error(
-            'Uncaught exception:',
+            '[UNCAUGHT EXCEPTION]',
             error
         );
     }
 );
 
+// ============================================================
+// ARRANQUE
+// ============================================================
+
 console.log(
     '🤖 Bot iniciado correctamente.'
 );
+
+console.log(
+    `[CONFIG] TS ${TS_HOST}:${TS_PORT} server=${TS_SERVER_ID} channel=${TS_CHANNEL_ID}`
+);
+
+sendStartupMessage()
+    .catch(error => {
+
+        console.error(
+            '[STARTUP]',
+            error.message
+        );
+    });
