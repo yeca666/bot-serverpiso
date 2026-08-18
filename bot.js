@@ -580,35 +580,62 @@ async function getTsUsers() {
         const result =
             await tsRequest('clientlist');
 
-        if (result.status?.code !== 0) {
+        console.log(
+            '[TS USERS] Respuesta:',
+            JSON.stringify(result)
+        );
+
+        if (
+            !result ||
+            !result.status ||
+            Number(result.status.code) !== 0
+        ) {
 
             console.error(
                 '[TS USERS] Error:',
-                result.status
+                JSON.stringify(result)
             );
 
             return [];
         }
 
-        const users =
-            (result.body || [])
-                .filter(client =>
-                    String(client.client_type) === '0'
-                )
-                .filter(client => {
-
-                    const nickname =
-                        String(
-                            client.client_nickname || ''
-                        ).toLowerCase();
-
-                    return !nickname.includes('bot');
-                });
+        const clients =
+            Array.isArray(result.body)
+                ? result.body
+                : [];
 
         console.log(
-            '[TS USERS] Usuarios encontrados:',
-            users.map(u =>
-                u.client_nickname
+            '[TS USERS] Clientes encontrados:',
+            clients.length
+        );
+
+        const users =
+            clients.filter(client => {
+
+                const type =
+                    Number(client.client_type);
+
+                const nickname =
+                    String(
+                        client.client_nickname || ''
+                    );
+
+                console.log(
+                    '[TS USERS] Cliente:',
+                    nickname,
+                    'type:',
+                    type
+                );
+
+                // 0 = usuario normal
+                // 1 = ServerQuery
+                return type === 0;
+            });
+
+        console.log(
+            '[TS USERS] Usuarios normales:',
+            users.map(
+                u => u.client_nickname
             )
         );
 
@@ -617,7 +644,7 @@ async function getTsUsers() {
     } catch (e) {
 
         console.error(
-            '[TS USERS]',
+            '[TS USERS] Error:',
             e.message
         );
 
@@ -666,8 +693,7 @@ function closeTsChat(chatId) {
 
 function updateChatPanel(chatId) {
 
-    const session =
-        tsChatSessions[chatId];
+    const session = tsChatSessions[chatId];
 
     if (!session || !session.panelId) {
         return;
@@ -675,25 +701,10 @@ function updateChatPanel(chatId) {
 
     const lines =
         session.messages.length
-
             ? session.messages
                 .slice(-12)
-                .map(message => {
-
-                    const safeName =
-                        escapeMarkdown(
-                            message.name
-                        );
-
-                    const safeText =
-                        escapeMarkdown(
-                            message.text
-                        );
-
-                    return `${safeName}: ${safeText}`;
-                })
+                .map(m => `${m.name}: ${m.text}`)
                 .join('\n')
-
             : '💬 Todavía no hay mensajes nuevos.';
 
     const text =
@@ -702,17 +713,15 @@ function updateChatPanel(chatId) {
         `${lines}\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
         `✏️ Escribe un mensaje y se enviará al servidor.\n` +
-        `ℹ️ Solo se muestran mensajes recibidos desde que abriste el chat.`;
+        `👥 Pulsa "Usuarios conectados" para ver quién está en TeamSpeak.`;
 
     const keyboard = [
-
         [
             {
-                text: '🔄 Actualizar usuarios',
+                text: '👥 Usuarios conectados',
                 callback_data: 'ts_chat_users'
             }
         ],
-
         [
             {
                 text: '🔴 Cerrar chat',
@@ -725,16 +734,10 @@ function updateChatPanel(chatId) {
         text,
         {
             chat_id: chatId,
-
-            message_id:
-                session.panelId,
-
-            parse_mode:
-                'Markdown',
-
+            message_id: session.panelId,
+            parse_mode: 'Markdown',
             reply_markup: {
-                inline_keyboard:
-                    keyboard
+                inline_keyboard: keyboard
             }
         }
     ).catch(error => {
