@@ -14,11 +14,8 @@ const sshPass = process.env.ssh_pass;
 const sshHost =
     process.env.ssh_host || 'serverpiso.duckdns.org';
 
-const ADMIN_PASSWORD =
-    process.env.adminpassword;
-
-const GUEST_PASSWORD =
-    process.env.guestpassword;
+const ADMIN_PASSWORD = process.env.adminpassword;
+const GUEST_PASSWORD = process.env.guestpassword;
 
 // ============================================================
 // TEAMSPEAK
@@ -53,7 +50,7 @@ const bot = new TelegramBot(token, {
 });
 
 // ============================================================
-// ESTADOS
+// ESTADO
 // ============================================================
 
 const authSessions = {};
@@ -61,48 +58,17 @@ const tsChatSessions = {};
 const pendingActions = {};
 
 // ============================================================
-// UTILIDADES
+// UTILIDADES TELEGRAM
 // ============================================================
 
-function drawBar(percentage, size = 10) {
-
-    const pct = Math.max(
-        0,
-        Math.min(
-            100,
-            Number(percentage) || 0
-        )
-    );
-
-    const filled =
-        Math.round(
-            (pct / 100) * size
-        );
-
-    return (
-        '▰'.repeat(filled) +
-        '▱'.repeat(size - filled)
-    );
-}
-
-// ------------------------------------------------------------
-// HTML TELEGRAM
-// ------------------------------------------------------------
-
 function escapeTelegramHtml(text) {
-
     return String(text ?? '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
 }
 
-// ------------------------------------------------------------
-// MARKDOWN TELEGRAM
-// ------------------------------------------------------------
-
 function escapeMarkdown(text) {
-
     return String(text ?? '')
         .replace(/\\/g, '\\\\')
         .replace(/_/g, '\\_')
@@ -124,88 +90,76 @@ function escapeMarkdown(text) {
         .replace(/!/g, '\\!');
 }
 
-// ------------------------------------------------------------
-// ANSI
-// ------------------------------------------------------------
+function drawBar(value, size = 10) {
+    const pct = Math.max(
+        0,
+        Math.min(100, Number(value) || 0)
+    );
+
+    const filled = Math.round(
+        (pct / 100) * size
+    );
+
+    return (
+        '▰'.repeat(filled) +
+        '▱'.repeat(size - filled)
+    );
+}
+
+// ============================================================
+// ANSI / TEAMSPEAK
+// ============================================================
 
 function removeAnsi(text) {
-
     return String(text).replace(
         /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g,
         ''
     );
 }
 
-// ============================================================
-// TEAMSPEAK DECODIFICACIÓN
-// ============================================================
-
 function decodeTs(value) {
-
-    if (
-        value === undefined ||
-        value === null
-    ) {
+    if (value === undefined || value === null) {
         return '';
     }
 
     const text = String(value);
-
     let result = '';
 
-    for (
-        let i = 0;
-        i < text.length;
-        i++
-    ) {
-
+    for (let i = 0; i < text.length; i++) {
         if (text[i] !== '\\') {
-
             result += text[i];
-
             continue;
         }
 
-        const next =
-            text[i + 1];
+        const next = text[i + 1];
 
         if (!next) {
-
             result += '\\';
-
             continue;
         }
 
         switch (next) {
-
             case 's':
                 result += ' ';
                 break;
-
             case 'p':
                 result += '|';
                 break;
-
             case 'n':
                 result += '\n';
                 break;
-
             case 'r':
                 result += '\r';
                 break;
-
             case '/':
                 result += '/';
                 break;
-
             case '\\':
                 result += '\\';
                 break;
-
             case 'a':
                 result += '\x07';
                 break;
-
             default:
                 result += next;
                 break;
@@ -217,12 +171,7 @@ function decodeTs(value) {
     return result;
 }
 
-// ============================================================
-// TEAMSPEAK ESCAPAR
-// ============================================================
-
 function tsEscape(text) {
-
     return String(text)
         .replace(/\\/g, '\\\\')
         .replace(/\|/g, '\\p')
@@ -232,120 +181,32 @@ function tsEscape(text) {
         .replace(/ /g, '\\s');
 }
 
-// ============================================================
-// PARSER TEAMSPEAK
-// ============================================================
-
 function parseTsFields(line) {
-
     const fields = {};
-
-    /*
-     * Ejemplo real:
-     *
-     * targetmode=2 msg=test invokerid=10
-     * invokername=Yeray_03 invokeruid=...
-     *
-     * Los campos están separados por espacios.
-     * Los espacios internos están escapados como \s.
-     */
 
     const regex =
         /([a-zA-Z0-9_]+)=((?:\\.|[^\s])*)/g;
 
     let match;
 
-    while (
-        (match = regex.exec(line)) !== null
-    ) {
-
-        fields[match[1]] =
-            decodeTs(match[2]);
+    while ((match = regex.exec(line)) !== null) {
+        fields[match[1]] = decodeTs(match[2]);
     }
 
     return fields;
 }
 
 // ============================================================
-// SPLIT DE RESPUESTAS TEAMSpeak
+// HISTORIAL
 // ============================================================
 
-function splitTsPipeLine(line) {
-
-    const result = [];
-
-    let current = '';
-    let escaped = false;
-
-    for (
-        let i = 0;
-        i < line.length;
-        i++
-    ) {
-
-        const char =
-            line[i];
-
-        if (escaped) {
-
-            current +=
-                '\\' + char;
-
-            escaped = false;
-
-            continue;
-        }
-
-        if (char === '\\') {
-
-            escaped = true;
-
-            continue;
-        }
-
-        if (char === '|') {
-
-            result.push(current);
-
-            current = '';
-
-            continue;
-        }
-
-        current += char;
-    }
-
-    if (escaped) {
-        current += '\\';
-    }
-
-    result.push(current);
-
-    return result;
-}
-
-// ============================================================
-// LIMPIAR HISTORIAL
-// ============================================================
-
-async function limpiarHistorial(
-    chatId,
-    lastMsgId
-) {
-
-    for (
-        let i = 0;
-        i < 50;
-        i++
-    ) {
-
+async function limpiarHistorial(chatId, lastMsgId) {
+    for (let i = 0; i < 50; i++) {
         try {
-
             await bot.deleteMessage(
                 chatId,
                 lastMsgId - i
             );
-
         } catch (e) {}
     }
 }
@@ -359,9 +220,7 @@ function isAuthenticated(chatId) {
 }
 
 function isAdmin(chatId) {
-    return (
-        authSessions[chatId]?.role === 'admin'
-    );
+    return authSessions[chatId]?.role === 'admin';
 }
 
 function requireAdmin(chatId) {
@@ -369,23 +228,17 @@ function requireAdmin(chatId) {
 }
 
 // ============================================================
-// SSH GENÉRICO HOST
+// SSH HOST
 // ============================================================
 
-function sshExec(command, timeout = 7000) {
-
+function sshExec(command, timeout = 10000) {
     return new Promise((resolve, reject) => {
-
-        const conn =
-            new Client();
+        const conn = new Client();
 
         let settled = false;
 
         const finishResolve = value => {
-
-            if (settled) {
-                return;
-            }
+            if (settled) return;
 
             settled = true;
 
@@ -397,10 +250,7 @@ function sshExec(command, timeout = 7000) {
         };
 
         const finishReject = error => {
-
-            if (settled) {
-                return;
-            }
+            if (settled) return;
 
             settled = true;
 
@@ -412,108 +262,71 @@ function sshExec(command, timeout = 7000) {
         };
 
         const timer = setTimeout(() => {
-
             finishReject(
-                new Error(
-                    'SSH timeout'
-                )
+                new Error('SSH timeout')
             );
-
         }, timeout);
 
         conn.on('ready', () => {
-
             conn.exec(
                 command,
                 (err, stream) => {
-
                     if (err) {
-
                         clearTimeout(timer);
-
                         finishReject(err);
-
                         return;
                     }
 
                     let stdout = '';
                     let stderr = '';
 
-                    stream.on(
-                        'data',
-                        data => {
-                            stdout +=
-                                data.toString();
-                        }
-                    );
+                    stream.on('data', data => {
+                        stdout += data.toString();
+                    });
 
-                    stream.stderr.on(
-                        'data',
-                        data => {
-                            stderr +=
-                                data.toString();
-                        }
-                    );
+                    stream.stderr.on('data', data => {
+                        stderr += data.toString();
+                    });
 
-                    stream.on(
-                        'close',
-                        () => {
+                    stream.on('close', () => {
+                        clearTimeout(timer);
 
-                            clearTimeout(timer);
-
-                            finishResolve({
-                                stdout,
-                                stderr
-                            });
-                        }
-                    );
+                        finishResolve({
+                            stdout,
+                            stderr
+                        });
+                    });
                 }
             );
         });
 
         conn.on('error', error => {
-
             clearTimeout(timer);
-
             finishReject(error);
         });
 
         conn.connect({
-
-            host:
-                sshHost,
-
-            port:
-                2222,
-
-            username:
-                sshUser,
-
-            password:
-                sshPass,
-
-            readyTimeout:
-                5000
+            host: sshHost,
+            port: 2222,
+            username: sshUser,
+            password: sshPass,
+            readyTimeout: 7000
         });
     });
 }
 
 // ============================================================
-// MONITOR DEL HOST
+// MONITOR
 // ============================================================
 
 async function getHardwareStats() {
-
     try {
-
         const command = `
-echo "__TEMP__"
+echo "__SENSORS__"
 sensors 2>/dev/null
 
 echo "__GPU__"
-if command -v nvidia-smi >/dev/null 2>&1; then
-    nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -n 1
-fi
+nvidia-smi --query-gpu=temperature.gpu,gpu_util --format=csv,noheader,nounits 2>/dev/null | head -n 1
 
 echo "__RAM__"
 free -m
@@ -530,14 +343,12 @@ df -h /
 echo "__END__"
 `;
 
-        const result =
-            await sshExec(
-                command,
-                9000
-            );
+        const result = await sshExec(
+            command,
+            12000
+        );
 
-        const output =
-            result.stdout || '';
+        const output = result.stdout || '';
 
         // ------------------------------------------------------
         // CPU
@@ -545,34 +356,18 @@ echo "__END__"
 
         let cpu = 'N/D';
 
-        const cpuMatches = [
-            output.match(
-                /Package id 0:\s+\+?([\d.]+)\s*°?C/i
-            ),
-
-            output.match(
-                /Tctl:\s+\+?([\d.]+)\s*°?C/i
-            ),
-
-            output.match(
-                /CPU(?: Temperature| Temp)?[^+\d]*\+?([\d.]+)\s*°?C/i
-            ),
-
-            output.match(
-                /temp1:\s+\+?([\d.]+)\s*°?C/i
-            )
+        const cpuPatterns = [
+            /Package id 0:\s+\+?([\d.]+)\s*°?C/i,
+            /Tctl:\s+\+?([\d.]+)\s*°?C/i,
+            /CPU(?: Temperature| Temp)?[^+\d]*\+?([\d.]+)\s*°?C/i,
+            /temp1:\s+\+?([\d.]+)\s*°?C/i
         ];
 
-        for (
-            const match of cpuMatches
-        ) {
+        for (const pattern of cpuPatterns) {
+            const match = output.match(pattern);
 
             if (match) {
-
-                cpu =
-                    Number(match[1])
-                        .toFixed(1);
-
+                cpu = Number(match[1]).toFixed(1);
                 break;
             }
         }
@@ -582,59 +377,35 @@ echo "__END__"
         // ------------------------------------------------------
 
         let gpu = 'N/D';
+        let gpuUtil = 'N/D';
 
-        const gpuMatch =
-            output.match(
-                /__GPU__\s*[\r\n]+([0-9]+(?:\.[0-9]+)?)/m
-            );
+        const gpuMatch = output.match(
+            /__GPU__\s*[\r\n]+([0-9.]+)\s*,\s*([0-9.]+)/m
+        );
 
         if (gpuMatch) {
-
-            gpu =
-                Number(
-                    gpuMatch[1]
-                ).toFixed(1);
-        } else {
-
-            const genericGpu =
-                output.match(
-                    /(?:edge|junction|GPU)[^+\d]*\+?([\d.]+)\s*°?C/i
-                );
-
-            if (genericGpu) {
-
-                gpu =
-                    Number(
-                        genericGpu[1]
-                    ).toFixed(1);
-            }
+            gpu = Number(gpuMatch[1]).toFixed(1);
+            gpuUtil = Number(gpuMatch[2]).toFixed(1);
         }
 
         // ------------------------------------------------------
         // RAM
         // ------------------------------------------------------
 
-        let ramPct = 'N/D';
+        let ramP = 'N/D';
 
-        const ramMatch =
-            output.match(
-                /__RAM__[\s\S]*?Mem:\s+(\d+)\s+(\d+)/m
-            );
+        const ramMatch = output.match(
+            /__RAM__[\s\S]*?Mem:\s+(\d+)\s+(\d+)/m
+        );
 
         if (ramMatch) {
-
-            const total =
-                Number(ramMatch[1]);
-
-            const used =
-                Number(ramMatch[2]);
+            const total = Number(ramMatch[1]);
+            const used = Number(ramMatch[2]);
 
             if (total > 0) {
-
-                ramPct =
-                    (
-                        (used / total) * 100
-                    ).toFixed(1);
+                ramP = (
+                    (used / total) * 100
+                ).toFixed(1);
             }
         }
 
@@ -644,17 +415,14 @@ echo "__END__"
 
         let ping = 'N/D';
 
-        const pingMatch =
-            output.match(
-                /__PING__[\s\S]*?time[=<]([\d.]+)\s*ms/i
-            );
+        const pingMatch = output.match(
+            /__PING__[\s\S]*?time[=<]([\d.]+)\s*ms/i
+        );
 
         if (pingMatch) {
-
-            ping =
-                Number(
-                    pingMatch[1]
-                ).toFixed(1);
+            ping = Number(
+                pingMatch[1]
+            ).toFixed(1);
         }
 
         // ------------------------------------------------------
@@ -663,80 +431,58 @@ echo "__END__"
 
         let uptime = 'N/D';
 
-        const uptimeMatch =
-            output.match(
-                /__UPTIME__\s*[\r\n]+([^\r\n]+)/m
-            );
+        const uptimeMatch = output.match(
+            /__UPTIME__\s*[\r\n]+([^\r\n]+)/m
+        );
 
         if (uptimeMatch) {
-
-            uptime =
-                uptimeMatch[1]
-                    .trim()
-                    .replace(
-                        /days?/g,
-                        'd'
-                    )
-                    .replace(
-                        /hours?/g,
-                        'h'
-                    )
-                    .replace(
-                        /minutes?/g,
-                        'm'
-                    )
-                    .replace(
-                        /seconds?/g,
-                        's'
-                    );
+            uptime = uptimeMatch[1]
+                .trim()
+                .replace(/days?/g, 'd')
+                .replace(/hours?/g, 'h')
+                .replace(/minutes?/g, 'm')
+                .replace(/seconds?/g, 's')
+                .replace(/,/g, '');
         }
 
         // ------------------------------------------------------
         // DISCO
         // ------------------------------------------------------
 
-        let disk = 'N/D';
+        let diskP = 'N/D';
 
-        const diskMatch =
-            output.match(
-                /__DISK__[\s\S]*?\s(\d+)%\s+\/\s*$/m
-            );
+        const diskMatch = output.match(
+            /__DISK__[\s\S]*?\s(\d+)%\s+\/\s*$/m
+        );
 
         if (diskMatch) {
-
-            disk =
-                Number(
-                    diskMatch[1]
-                );
+            diskP = Number(diskMatch[1]);
         }
 
         return {
-
             cpu,
             gpu,
-            ramP: ramPct,
+            gpuUtil,
+            ramP,
             ping,
-            up: uptime,
-            diskP: disk
-
+            uptime,
+            diskP
         };
 
     } catch (error) {
-
         console.error(
             '[HOST MONITOR]',
             error.message
         );
 
         return {
-
             cpu: 'N/D',
             gpu: 'N/D',
+            gpuUtil: 'N/D',
             ramP: 'N/D',
             ping: 'N/D',
-            up: 'N/D',
+            uptime: 'N/D',
             diskP: 'N/D'
-
         };
     }
 }
@@ -746,24 +492,19 @@ echo "__END__"
 // ============================================================
 
 async function getServers() {
-
-    const response =
-        await fetch(
-            `${host}/api/client`,
-            {
-                headers: {
-
-                    Authorization:
-                        `Bearer ${pteroKey}`,
-
-                    Accept:
-                        'application/json'
-                }
+    const response = await fetch(
+        `${host}/api/client`,
+        {
+            headers: {
+                Authorization:
+                    `Bearer ${pteroKey}`,
+                Accept:
+                    'application/json'
             }
-        );
+        }
+    );
 
     if (!response.ok) {
-
         throw new Error(
             `Pterodactyl HTTP ${response.status}`
         );
@@ -772,14 +513,61 @@ async function getServers() {
     const data =
         await response.json();
 
-    return data.data || [];
+    const servers = data.data || [];
+
+    for (const server of servers) {
+        try {
+            const identifier =
+                server.attributes.identifier;
+
+            const resourceResponse =
+                await fetch(
+                    `${host}/api/client/servers/${identifier}/resources`,
+                    {
+                        headers: {
+                            Authorization:
+                                `Bearer ${pteroKey}`,
+                            Accept:
+                                'application/json'
+                        }
+                    }
+                );
+
+            if (resourceResponse.ok) {
+                const resourceData =
+                    await resourceResponse.json();
+
+                server.attributes.current_state =
+                    resourceData.attributes?.current_state ||
+                    'offline';
+
+                server.attributes.resources =
+                    resourceData.attributes?.resources ||
+                    {};
+            } else {
+                server.attributes.current_state =
+                    'unknown';
+            }
+
+        } catch (error) {
+            console.error(
+                '[PTERODACTYL STATE]',
+                server.attributes?.identifier,
+                error.message
+            );
+
+            server.attributes.current_state =
+                'unknown';
+        }
+    }
+
+    return servers;
 }
 
 async function powerServer(
     serverId,
     action
 ) {
-
     return fetch(
         `${host}/api/client/servers/${serverId}/power`,
         {
@@ -787,7 +575,6 @@ async function powerServer(
                 'POST',
 
             headers: {
-
                 Authorization:
                     `Bearer ${pteroKey}`,
 
@@ -808,383 +595,309 @@ async function powerServer(
 }
 
 // ============================================================
-// SERVERQUERY SSH
+// SERVERQUERY
 // ============================================================
 
-function tsQueryCommand(
-    commands,
-    timeout = 7000
-) {
+function createTsQuerySession() {
+    return new Promise((resolve, reject) => {
+        const conn = new Client();
 
-    return new Promise(
-        (resolve, reject) => {
-
-            const conn =
-                new Client();
-
-            let streamRef = null;
-            let buffer = '';
-            let outputLines = [];
-            let settled = false;
-
-            const finishResolve =
-                value => {
-
-                    if (settled) {
+        conn.on('ready', () => {
+            conn.shell(
+                false,
+                (err, stream) => {
+                    if (err) {
+                        conn.end();
+                        reject(err);
                         return;
                     }
 
-                    settled = true;
-
-                    try {
-                        if (streamRef) {
-                            streamRef.end();
-                        }
-                    } catch (e) {}
-
-                    try {
-                        conn.end();
-                    } catch (e) {}
-
-                    resolve(value);
-                };
-
-            const finishReject =
-                error => {
-
-                    if (settled) {
-                        return;
-                    }
-
-                    settled = true;
-
-                    try {
-                        conn.end();
-                    } catch (e) {}
-
-                    reject(error);
-                };
-
-            const timer =
-                setTimeout(
-                    () => {
-
-                        finishReject(
-                            new Error(
-                                'ServerQuery timeout'
-                            )
-                        );
-
-                    },
-                    timeout
-                );
-
-            conn.on('ready', () => {
-
-                conn.shell(
-                    false,
-                    (err, stream) => {
-
-                        if (err) {
-
-                            clearTimeout(
-                                timer
-                            );
-
-                            finishReject(err);
-
-                            return;
-                        }
-
-                        streamRef =
-                            stream;
-
-                        stream.on(
-                            'data',
-                            data => {
-
-                                let raw =
-                                    removeAnsi(
-                                        data.toString()
-                                    );
-
-                                buffer +=
-                                    raw;
-
-                                const lines =
-                                    buffer.split(
-                                        /\r?\n/
-                                    );
-
-                                buffer =
-                                    lines.pop() || '';
-
-                                for (
-                                    const rawLine
-                                    of lines
-                                ) {
-
-                                    const line =
-                                        rawLine.trim();
-
-                                    if (!line) {
-                                        continue;
-                                    }
-
-                                    /*
-                                     * Ignorar el prompt.
-                                     */
-
-                                    if (
-                                        line.endsWith(
-                                            '>'
-                                        ) &&
-                                        (
-                                            line.includes(
-                                                '@'
-                                            ) ||
-                                            line === '>'
-                                        )
-                                    ) {
-                                        continue;
-                                    }
-
-                                    /*
-                                     * TeamSpeak devuelve:
-                                     *
-                                     * error id=0 msg=ok
-                                     *
-                                     * al terminar un comando.
-                                     */
-
-                                    if (
-                                        line.startsWith(
-                                            'error id='
-                                        )
-                                    ) {
-
-                                        const errorFields =
-                                            parseTsFields(
-                                                line
-                                                    .replace(
-                                                        /^error\s+/,
-                                                        ''
-                                                    )
-                                            );
-
-                                        const code =
-                                            Number(
-                                                errorFields.id ||
-                                                0
-                                            );
-
-                                        if (
-                                            code !== 0
-                                        ) {
-
-                                            clearTimeout(
-                                                timer
-                                            );
-
-                                            finishReject(
-                                                new Error(
-                                                    line
-                                                )
-                                            );
-
-                                            return;
-                                        }
-
-                                        clearTimeout(
-                                            timer
-                                        );
-
-                                        finishResolve(
-                                            outputLines
-                                                .join(
-                                                    '\n'
-                                                )
-                                        );
-
-                                        return;
-                                    }
-
-                                    if (
-                                        line === 'TS3'
-                                    ) {
-                                        continue;
-                                    }
-
-                                    if (
-                                        line.startsWith(
-                                            'Welcome to the TeamSpeak'
-                                        )
-                                    ) {
-                                        continue;
-                                    }
-
-                                    outputLines.push(
-                                        line
-                                    );
-                                }
-                            }
-                        );
-
-                        stream.on(
-                            'error',
-                            error => {
-
-                                clearTimeout(
-                                    timer
-                                );
-
-                                finishReject(
-                                    error
-                                );
-                            }
-                        );
-
-                        stream.write(
-                            commands
-                        );
-
-                        if (
-                            !commands.endsWith(
-                                '\n'
-                            )
-                        ) {
-
-                            stream.write(
-                                '\n'
-                            );
-                        }
-                    }
-                );
-            });
-
-            conn.on(
-                'error',
-                error => {
-
-                    clearTimeout(
-                        timer
-                    );
-
-                    finishReject(
-                        error
-                    );
+                    resolve({
+                        conn,
+                        stream
+                    });
                 }
             );
+        });
 
-            conn.connect({
+        conn.on('error', reject);
 
-                host:
-                    TS_HOST,
-
-                port:
-                    TS_PORT,
-
-                username:
-                    TS_USER,
-
-                password:
-                    TS_PASS,
-
-                readyTimeout:
-                    7000,
-
-                keepaliveInterval:
-                    10000
-            });
-        }
-    );
+        conn.connect({
+            host:
+                TS_HOST,
+            port:
+                TS_PORT,
+            username:
+                TS_USER,
+            password:
+                TS_PASS,
+            readyTimeout:
+                7000,
+            keepaliveInterval:
+                10000
+        });
+    });
 }
 
 // ============================================================
-// OBTENER USUARIOS TEAMSpeak
+// PARSEAR CLIENTLIST
 // ============================================================
 
-async function getTsUsers() {
+function parseClientList(output) {
+    const clients = [];
 
-    try {
+    const lines = output
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean);
 
-        const output =
-            await tsQueryCommand(
-                `use ${TS_SERVER_ID}\nclientlist\n`,
-                7000
+    for (const line of lines) {
+        if (
+            !line.includes('client_type=')
+        ) {
+            continue;
+        }
+
+        const fields =
+            parseTsFields(line);
+
+        const type =
+            Number(fields.client_type);
+
+        if (type !== 0) {
+            continue;
+        }
+
+        clients.push({
+            nickname:
+                fields.client_nickname ||
+                'Usuario',
+            clid:
+                fields.clid || '',
+            cid:
+                fields.cid || '',
+            databaseId:
+                fields.client_database_id ||
+                ''
+        });
+    }
+
+    return clients;
+}
+
+// ============================================================
+// CLIENTLIST MEDIANTE UNA SESIÓN EXISTENTE
+// ============================================================
+
+function getTsUsersFromSession(session) {
+    return new Promise((resolve, reject) => {
+        if (
+            !session ||
+            !session.stream
+        ) {
+            reject(
+                new Error(
+                    'No existe sesión TeamSpeak'
+                )
+            );
+            return;
+        }
+
+        let buffer = '';
+        let finished = false;
+
+        const onData = data => {
+            buffer += removeAnsi(
+                data.toString()
             );
 
-        console.log(
-            '[TS USERS RAW]',
-            output
+            const lines =
+                buffer.split(/\r?\n/);
+
+            buffer =
+                lines.pop() || '';
+
+            for (const rawLine of lines) {
+                const line =
+                    rawLine.trim();
+
+                if (!line) {
+                    continue;
+                }
+
+                if (
+                    line.startsWith('clid=') ||
+                    line.includes(
+                        'client_nickname='
+                    )
+                ) {
+                    session.userQueryBuffer =
+                        session.userQueryBuffer || [];
+
+                    session.userQueryBuffer.push(
+                        line
+                    );
+                }
+
+                if (
+                    line.startsWith('error id=')
+                ) {
+                    const fields =
+                        parseTsFields(
+                            line.replace(
+                                /^error\s+/,
+                                ''
+                            )
+                        );
+
+                    const code =
+                        Number(fields.id || 0);
+
+                    if (
+                        code === 0
+                    ) {
+                        finished = true;
+
+                        session.stream.removeListener(
+                            'data',
+                            onData
+                        );
+
+                        const text =
+                            (
+                                session.userQueryBuffer ||
+                                []
+                            ).join('\n');
+
+                        session.userQueryBuffer =
+                            [];
+
+                        resolve(
+                            parseClientList(
+                                text
+                            )
+                        );
+                    } else {
+                        finished = true;
+
+                        session.stream.removeListener(
+                            'data',
+                            onData
+                        );
+
+                        session.userQueryBuffer =
+                            [];
+
+                        reject(
+                            new Error(line)
+                        );
+                    }
+                }
+            }
+        };
+
+        session.stream.on(
+            'data',
+            onData
         );
 
-        const users = [];
+        session.userQueryBuffer = [];
 
-        const chunks =
-            output
-                .split('|')
-                .map(
-                    x => x.trim()
-                )
-                .filter(Boolean);
+        try {
+            session.stream.write(
+                `use ${TS_SERVER_ID}\n`
+            );
 
-        for (
-            const chunk of chunks
-        ) {
+            setTimeout(() => {
+                if (!finished) {
+                    session.stream.write(
+                        'clientlist -uid\n'
+                    );
+                }
+            }, 200);
 
-            if (
-                !chunk.includes(
-                    'client_type='
-                )
-            ) {
-                continue;
+        } catch (error) {
+            session.stream.removeListener(
+                'data',
+                onData
+            );
+
+            reject(error);
+        }
+
+        setTimeout(() => {
+            if (!finished) {
+                session.stream.removeListener(
+                    'data',
+                    onData
+                );
+
+                session.userQueryBuffer =
+                    [];
+
+                reject(
+                    new Error(
+                        'Timeout clientlist'
+                    )
+                );
             }
+        }, 5000);
+    });
+}
 
-            const fields =
-                parseTsFields(
-                    chunk
+// ============================================================
+// OBTENER USUARIOS
+// ============================================================
+
+async function getTsUsers(chatId = null) {
+    try {
+        if (
+            chatId &&
+            tsChatSessions[chatId]
+        ) {
+            const users =
+                await getTsUsersFromSession(
+                    tsChatSessions[chatId]
                 );
-
-            const type =
-                Number(
-                    fields.client_type
-                );
-
-            const nickname =
-                fields.client_nickname ||
-                '';
 
             console.log(
                 '[TS USERS]',
-                nickname,
-                'type=',
-                type
+                users.map(
+                    user =>
+                        user.nickname
+                )
             );
 
-            if (
-                type === 0
-            ) {
-
-                users.push({
-                    nickname,
-                    clid:
-                        fields.clid || ''
-                });
-            }
+            return users;
         }
 
-        console.log(
-            '[TS USERS] Usuarios normales:',
-            users.map(
-                u => u.nickname
-            )
-        );
+        /*
+         * Si no hay chat abierto, abrimos temporalmente
+         * una conexión ServerQuery.
+         */
+
+        const query =
+            await createTsQuerySession();
+
+        const session = {
+            conn:
+                query.conn,
+            stream:
+                query.stream
+        };
+
+        const users =
+            await getTsUsersFromSession(
+                session
+            );
+
+        try {
+            query.conn.end();
+        } catch (e) {}
 
         return users;
 
     } catch (error) {
-
         console.error(
             '[TS USERS]',
             error.message
@@ -1195,11 +908,115 @@ async function getTsUsers() {
 }
 
 // ============================================================
+// ESTADO TEAMSPEAK REAL
+// ============================================================
+
+async function isTeamSpeakOnline() {
+    try {
+        const query =
+            await createTsQuerySession();
+
+        const session = query;
+
+        let buffer = '';
+
+        return await new Promise(resolve => {
+            let done = false;
+
+            const finish =
+                value => {
+                    if (done) return;
+
+                    done = true;
+
+                    try {
+                        session.conn.end();
+                    } catch (e) {}
+
+                    resolve(value);
+                };
+
+            session.stream.on(
+                'data',
+                data => {
+                    buffer += removeAnsi(
+                        data.toString()
+                    );
+
+                    const lines =
+                        buffer.split(
+                            /\r?\n/
+                        );
+
+                    buffer =
+                        lines.pop() || '';
+
+                    for (const rawLine of lines) {
+                        const line =
+                            rawLine.trim();
+
+                        if (
+                            line.startsWith(
+                                'error id='
+                            )
+                        ) {
+                            const fields =
+                                parseTsFields(
+                                    line.replace(
+                                        /^error\s+/,
+                                        ''
+                                    )
+                                );
+
+                            const code =
+                                Number(
+                                    fields.id || 0
+                                );
+
+                            finish(
+                                code === 0
+                            );
+
+                            return;
+                        }
+                    }
+                }
+            );
+
+            session.stream.write(
+                `use ${TS_SERVER_ID}\n`
+            );
+
+            setTimeout(() => {
+                try {
+                    session.stream.write(
+                        'serverinfo\n'
+                    );
+                } catch (e) {
+                    finish(false);
+                }
+            }, 300);
+
+            setTimeout(() => {
+                finish(false);
+            }, 5000);
+        });
+
+    } catch (error) {
+        console.error(
+            '[TS STATUS]',
+            error.message
+        );
+
+        return false;
+    }
+}
+
+// ============================================================
 // CHAT TEAMSPEAK
 // ============================================================
 
 function closeTsChat(chatId) {
-
     const session =
         tsChatSessions[chatId];
 
@@ -1208,33 +1025,27 @@ function closeTsChat(chatId) {
     }
 
     try {
-
         if (session.stream) {
-
             session.stream.write(
                 'servernotifyunregister event=textchannel\n'
             );
         }
-
     } catch (e) {}
 
     try {
-
         if (session.conn) {
             session.conn.end();
         }
-
     } catch (e) {}
 
     delete tsChatSessions[chatId];
 }
 
 // ============================================================
-// PANEL DEL CHAT
+// ACTUALIZAR CHAT
 // ============================================================
 
 function updateChatPanel(chatId) {
-
     const session =
         tsChatSessions[chatId];
 
@@ -1251,7 +1062,6 @@ function updateChatPanel(chatId) {
             ? session.messages
                 .slice(-12)
                 .map(message => {
-
                     const name =
                         escapeTelegramHtml(
                             message.name
@@ -1279,22 +1089,18 @@ function updateChatPanel(chatId) {
         `👥 Pulsa <b>Usuarios conectados</b> para ver quién está en TeamSpeak.`;
 
     const keyboard = [
-
         [
             {
                 text:
                     '👥 Usuarios conectados',
-
                 callback_data:
                     'ts_chat_users'
             }
         ],
-
         [
             {
                 text:
                     '🔴 Cerrar chat',
-
                 callback_data:
                     'ts_chat_close'
             }
@@ -1304,27 +1110,29 @@ function updateChatPanel(chatId) {
     bot.editMessageText(
         text,
         {
-
             chat_id:
                 chatId,
-
             message_id:
                 session.panelId,
-
             parse_mode:
                 'HTML',
-
             reply_markup: {
                 inline_keyboard:
                     keyboard
             }
         }
     ).catch(error => {
-
-        console.error(
-            '[TELEGRAM PANEL]',
-            error.message
-        );
+        if (
+            !String(error.message)
+                .includes(
+                    'message is not modified'
+                )
+        ) {
+            console.error(
+                '[TELEGRAM PANEL]',
+                error.message
+            );
+        }
     });
 }
 
@@ -1333,7 +1141,6 @@ function updateChatPanel(chatId) {
 // ============================================================
 
 function openTsChat(chatId) {
-
     return new Promise(
         (resolve, reject) => {
 
@@ -1347,18 +1154,13 @@ function openTsChat(chatId) {
                 new Client();
 
             const session = {
-
                 conn,
-
                 stream:
                     null,
-
                 panelId:
                     null,
-
                 messages:
                     [],
-
                 buffer:
                     ''
             };
@@ -1379,14 +1181,13 @@ function openTsChat(chatId) {
                         (err, stream) => {
 
                             if (err) {
-
                                 closeTsChat(
                                     chatId
                                 );
 
-                                return reject(
-                                    err
-                                );
+                                reject(err);
+
+                                return;
                             }
 
                             session.stream =
@@ -1396,16 +1197,14 @@ function openTsChat(chatId) {
                                 '[TS CHAT] Shell abierto'
                             );
 
-                            // ------------------------------------------------
-                            // RECEPCIÓN
-                            // ------------------------------------------------
-
                             stream.on(
                                 'data',
                                 data => {
 
                                     let raw =
-                                        data.toString();
+                                        removeAnsi(
+                                            data.toString()
+                                        );
 
                                     console.log(
                                         '[TS RAW]',
@@ -1413,11 +1212,6 @@ function openTsChat(chatId) {
                                             raw
                                         )
                                     );
-
-                                    raw =
-                                        removeAnsi(
-                                            raw
-                                        );
 
                                     session.buffer +=
                                         raw;
@@ -1454,7 +1248,6 @@ function openTsChat(chatId) {
                                                 'notifytextmessage'
                                             )
                                         ) {
-
                                             continue;
                                         }
 
@@ -1463,11 +1256,6 @@ function openTsChat(chatId) {
                                                 /^notifytextmessage\s*/,
                                                 ''
                                             );
-
-                                        console.log(
-                                            '[TS EVENT RAW]',
-                                            eventLine
-                                        );
 
                                         const fields =
                                             parseTsFields(
@@ -1490,26 +1278,14 @@ function openTsChat(chatId) {
                                             fields.invokeruid ||
                                             'Usuario';
 
-                                        if (
-                                            !message
-                                        ) {
-
+                                        if (!message) {
                                             continue;
                                         }
-
-                                        /*
-                                         * El mensaje que mandamos
-                                         * desde Telegram ya se añade
-                                         * como "Tú".
-                                         *
-                                         * Evitamos duplicarlo.
-                                         */
 
                                         if (
                                             fields.invokername ===
                                             TS_USER
                                         ) {
-
                                             console.log(
                                                 '[TS EVENT] Ignorado: mensaje propio'
                                             );
@@ -1518,9 +1294,7 @@ function openTsChat(chatId) {
                                         }
 
                                         session.messages.push({
-
                                             name,
-
                                             text:
                                                 message
                                         });
@@ -1529,7 +1303,6 @@ function openTsChat(chatId) {
                                             session.messages.length >
                                             20
                                         ) {
-
                                             session.messages.shift();
                                         }
 
@@ -1548,16 +1321,9 @@ function openTsChat(chatId) {
                                         '[TS CHAT] Stream cerrado'
                                     );
 
-                                    if (
-                                        tsChatSessions[
-                                            chatId
-                                        ]
-                                    ) {
-
-                                        delete tsChatSessions[
-                                            chatId
-                                        ];
-                                    }
+                                    delete tsChatSessions[
+                                        chatId
+                                    ];
                                 }
                             );
 
@@ -1576,10 +1342,6 @@ function openTsChat(chatId) {
                                 }
                             );
 
-                            // ------------------------------------------------
-                            // SELECCIONAR SERVIDOR
-                            // ------------------------------------------------
-
                             stream.write(
                                 `use ${TS_SERVER_ID}\n`
                             );
@@ -1588,30 +1350,19 @@ function openTsChat(chatId) {
                                 `[TS CHAT] Seleccionando servidor ${TS_SERVER_ID}`
                             );
 
-                            // ------------------------------------------------
-                            // SUSCRIBIRSE
-                            // ------------------------------------------------
+                            setTimeout(() => {
 
-                            setTimeout(
-                                () => {
+                                stream.write(
+                                    `servernotifyregister event=textchannel id=${TS_CHANNEL_ID}\n`
+                                );
 
-                                    console.log(
-                                        `[TS CHAT] Suscribiendo a textchannel del canal ${TS_CHANNEL_ID}`
-                                    );
+                                console.log(
+                                    '[TS CHAT] Suscripción enviada'
+                                );
 
-                                    stream.write(
-                                        `servernotifyregister event=textchannel id=${TS_CHANNEL_ID}\n`
-                                    );
+                                resolve();
 
-                                    console.log(
-                                        '[TS CHAT] Suscripción enviada'
-                                    );
-
-                                    resolve();
-
-                                },
-                                800
-                            );
+                            }, 800);
                         }
                     );
                 }
@@ -1666,7 +1417,6 @@ function sendTsMessage(
     chatId,
     message
 ) {
-
     return new Promise(
         (resolve, reject) => {
 
@@ -1677,12 +1427,13 @@ function sendTsMessage(
                 !session ||
                 !session.stream
             ) {
-
-                return reject(
+                reject(
                     new Error(
                         'Chat TeamSpeak cerrado'
                     )
                 );
+
+                return;
             }
 
             const command =
@@ -1697,7 +1448,6 @@ function sendTsMessage(
             );
 
             try {
-
                 session.stream.write(
                     command
                 );
@@ -1705,7 +1455,6 @@ function sendTsMessage(
                 resolve();
 
             } catch (error) {
-
                 reject(error);
             }
         }
@@ -1720,40 +1469,19 @@ async function sendMainMenu(
     chatId,
     editMessageId = null
 ) {
-
     const role =
         authSessions[chatId]?.role;
 
     const hw =
         await getHardwareStats();
 
-    const cpu =
-        hw.cpu !== 'N/D'
-            ? `🌡️ CPU <b>${escapeTelegramHtml(hw.cpu)}°C</b>`
-            : '🌡️ CPU <b>N/D</b>';
+    const tsOnline =
+        await isTeamSpeakOnline();
 
-    const gpu =
-        hw.gpu !== 'N/D'
-            ? `🎮 GPU <b>${escapeTelegramHtml(hw.gpu)}°C</b>`
-            : '🎮 GPU <b>N/D</b>';
-
-    const ram =
-        hw.ramP !== 'N/D'
-            ? `🧠 RAM <b>${escapeTelegramHtml(hw.ramP)}%</b>`
-            : '🧠 RAM <b>N/D</b>';
-
-    const ping =
-        hw.ping !== 'N/D'
-            ? `📡 Ping <b>${escapeTelegramHtml(hw.ping)} ms</b>`
-            : '📡 Ping <b>N/D</b>';
-
-    const disk =
-        hw.diskP !== 'N/D'
-            ? `💾 Disco <b>${escapeTelegramHtml(hw.diskP)}%</b>`
-            : '💾 Disco <b>N/D</b>';
-
-    const uptime =
-        `⏱️ Uptime <b>${escapeTelegramHtml(hw.up)}</b>`;
+    const tsStatus =
+        tsOnline
+            ? '🟢 ONLINE'
+            : '🔴 OFFLINE';
 
     const text =
         `<b>🏠 PANEL DE CONTROL</b>\n` +
@@ -1764,17 +1492,54 @@ async function sendMainMenu(
                 : 'Invitado'
         }</b>\n\n` +
 
-        `<b>📊 ESTADO DEL SERVIDOR</b>\n` +
-        `${cpu}\n` +
-        `${drawBar(hw.cpu === 'N/D' ? 0 : hw.cpu)}\n\n` +
+        `<b>📊 ESTADO DEL SERVIDOR</b>\n\n` +
 
-        `${gpu}\n` +
-        `${ram}\n` +
-        `${drawBar(hw.ramP === 'N/D' ? 0 : hw.ramP)}\n\n` +
+        `🌡️ CPU <b>${
+            escapeTelegramHtml(hw.cpu)
+        }°C</b>\n` +
+        `${drawBar(
+            hw.cpu === 'N/D'
+                ? 0
+                : hw.cpu
+        )}\n\n` +
 
-        `${ping}\n` +
-        `${disk}\n` +
-        `${uptime}\n\n` +
+        `🎮 GPU <b>${
+            escapeTelegramHtml(hw.gpu)
+        }°C</b>` +
+
+        `${
+            hw.gpuUtil !== 'N/D'
+                ? ` · ${escapeTelegramHtml(hw.gpuUtil)}%`
+                : ''
+        }\n\n` +
+
+        `🧠 RAM <b>${
+            escapeTelegramHtml(hw.ramP)
+        }%</b>\n` +
+        `${drawBar(
+            hw.ramP === 'N/D'
+                ? 0
+                : hw.ramP
+        )}\n\n` +
+
+        `💾 Disco <b>${
+            escapeTelegramHtml(hw.diskP)
+        }%</b>\n` +
+        `${drawBar(
+            hw.diskP === 'N/D'
+                ? 0
+                : hw.diskP
+        )}\n\n` +
+
+        `📡 Ping <b>${
+            escapeTelegramHtml(hw.ping)
+        } ms</b>\n` +
+
+        `⏱️ Uptime <b>${
+            escapeTelegramHtml(hw.uptime)
+        }</b>\n\n` +
+
+        `<b>🎙️ TeamSpeak</b> ${tsStatus}\n\n` +
 
         `Selecciona una sección:`;
 
@@ -1784,15 +1549,12 @@ async function sendMainMenu(
             {
                 text:
                     '🖥️ Servidores',
-
                 callback_data:
                     'menu_servers'
             },
-
             {
                 text:
                     '👥 TeamSpeak',
-
                 callback_data:
                     'menu_ts'
             }
@@ -1802,15 +1564,12 @@ async function sendMainMenu(
             {
                 text:
                     '💬 Chat TeamSpeak',
-
                 callback_data:
                     'menu_chat'
             },
-
             {
                 text:
                     '🔄 Actualizar estado',
-
                 callback_data:
                     'menu_home'
             }
@@ -1820,21 +1579,31 @@ async function sendMainMenu(
     if (
         role === 'admin'
     ) {
+        keyboard.push([
+            {
+                text:
+                    '🔥 Top procesos',
+                callback_data:
+                    'sys_top'
+            },
+            {
+                text:
+                    '🚀 Speedtest',
+                callback_data:
+                    'sys_speedtest'
+            }
+        ]);
 
         keyboard.push([
-
             {
                 text:
                     '🛰️ Reiniciar PC',
-
                 callback_data:
                     'sys_reboot'
             },
-
             {
                 text:
                     '💀 Apagar PC',
-
                 callback_data:
                     'sys_poweroff'
             }
@@ -1842,30 +1611,40 @@ async function sendMainMenu(
     }
 
     const options = {
-
         parse_mode:
             'HTML',
-
         reply_markup: {
             inline_keyboard:
                 keyboard
         }
     };
 
-    if (editMessageId) {
+    if (
+        editMessageId
+    ) {
 
-        await bot.editMessageText(
-            text,
-            {
-                chat_id:
-                    chatId,
+        try {
+            await bot.editMessageText(
+                text,
+                {
+                    chat_id:
+                        chatId,
+                    message_id:
+                        editMessageId,
+                    ...options
+                }
+            );
+        } catch (error) {
 
-                message_id:
-                    editMessageId,
-
-                ...options
+            if (
+                !String(error.message)
+                    .includes(
+                        'message is not modified'
+                    )
+            ) {
+                throw error;
             }
-        );
+        }
 
     } else {
 
@@ -1897,15 +1676,20 @@ async function showServers(
     ) {
 
         const state =
-            server.attributes?.current_state ||
-            server.attributes?.status ||
-            'offline';
+            server.attributes.current_state;
 
-        if (
+        /*
+         * En tu TeamSpeak 6 Pterodactyl deja el estado en
+         * "starting" aunque realmente esté funcionando.
+         *
+         * Para el panel tratamos "starting" como activo.
+         */
+
+        const active =
             state === 'running' ||
-            state === 'online'
-        ) {
+            state === 'starting';
 
+        if (active) {
             online++;
         }
     }
@@ -1927,54 +1711,64 @@ async function showServers(
         const id =
             a.identifier;
 
-        const name =
-            escapeTelegramHtml(
-                a.name
-            );
+        const state =
+            a.current_state ||
+            'unknown';
 
-        const running =
-            a.current_state === 'running' ||
-            a.status === 'running' ||
-            a.current_state === 'online';
+        const active =
+            state === 'running' ||
+            state === 'starting';
 
-        const icon =
-            running
-                ? '🟢'
-                : '🔴';
+        let icon = '⚪';
+
+        if (
+            state === 'running'
+        ) {
+            icon = '🟢';
+        } else if (
+            state === 'starting'
+        ) {
+            icon = '🟡';
+        } else if (
+            state === 'stopping'
+        ) {
+            icon = '🟠';
+        } else if (
+            state === 'offline'
+        ) {
+            icon = '🔴';
+        }
 
         text +=
-            `${icon} <b>${name}</b>\n` +
-            `${running ? 'ONLINE' : 'OFFLINE'}\n\n`;
+            `${icon} <b>${escapeTelegramHtml(a.name)}</b>\n` +
+            `Estado: <b>${escapeTelegramHtml(state)}</b>\n\n`;
 
-        if (running) {
+        if (active) {
 
             keyboard.push([
-
                 {
                     text:
                         `🔄 ${a.name}`,
-
                     callback_data:
                         `srv_restart_${id}`
                 },
-
                 {
                     text:
                         `⏹️ ${a.name}`,
-
                     callback_data:
                         `srv_stop_${id}`
                 }
             ]);
 
-        } else {
+        } else if (
+            state === 'stopping' ||
+            state === 'offline'
+        ) {
 
             keyboard.push([
-
                 {
                     text:
                         `▶️ Encender ${a.name}`,
-
                     callback_data:
                         `srv_start_${id}`
                 }
@@ -1983,29 +1777,23 @@ async function showServers(
     }
 
     keyboard.push([
-
         {
             text:
                 '🔄 Actualizar',
-
             callback_data:
                 'menu_servers'
         },
-
         {
             text:
                 '◀️ Volver',
-
             callback_data:
                 'menu_home'
         }
     ]);
 
     const options = {
-
         parse_mode:
             'HTML',
-
         reply_markup: {
             inline_keyboard:
                 keyboard
@@ -2014,18 +1802,30 @@ async function showServers(
 
     if (editMessageId) {
 
-        await bot.editMessageText(
-            text,
-            {
-                chat_id:
-                    chatId,
+        try {
 
-                message_id:
-                    editMessageId,
+            await bot.editMessageText(
+                text,
+                {
+                    chat_id:
+                        chatId,
+                    message_id:
+                        editMessageId,
+                    ...options
+                }
+            );
 
-                ...options
+        } catch (error) {
+
+            if (
+                !String(error.message)
+                    .includes(
+                        'message is not modified'
+                    )
+            ) {
+                throw error;
             }
-        );
+        }
 
     } else {
 
@@ -2038,7 +1838,7 @@ async function showServers(
 }
 
 // ============================================================
-// LISTA DE USUARIOS TS
+// USUARIOS
 // ============================================================
 
 async function showTsUsers(
@@ -2047,7 +1847,11 @@ async function showTsUsers(
 ) {
 
     const users =
-        await getTsUsers();
+        await getTsUsers(
+            returnToChat
+                ? chatId
+                : null
+        );
 
     let text =
         `<b>👥 USUARIOS CONECTADOS</b>\n` +
@@ -2059,7 +1863,7 @@ async function showTsUsers(
 
         text +=
             `😴 No hay usuarios normales conectados.\n\n` +
-            `💡 Los usuarios ServerQuery no aparecen en esta lista.`;
+            `💡 Los clientes ServerQuery no aparecen.`;
 
     } else {
 
@@ -2074,34 +1878,31 @@ async function showTsUsers(
 
     const keyboard = [];
 
-    if (returnToChat) {
+    if (
+        returnToChat
+    ) {
 
         keyboard.push([
-
             {
                 text:
                     '💬 Volver al chat',
-
                 callback_data:
                     'menu_chat'
             }
         ]);
+
     } else {
 
         keyboard.push([
-
             {
                 text:
                     '🔄 Actualizar',
-
                 callback_data:
                     'menu_ts'
             },
-
             {
                 text:
                     '💬 Abrir chat',
-
                 callback_data:
                     'menu_chat'
             }
@@ -2109,32 +1910,103 @@ async function showTsUsers(
     }
 
     keyboard.push([
-
         {
             text:
                 '◀️ Volver',
-
             callback_data:
                 'menu_home'
         }
     ]);
 
     await bot.sendMessage(
-
         chatId,
-
         text,
-
         {
             parse_mode:
                 'HTML',
-
             reply_markup: {
                 inline_keyboard:
                     keyboard
             }
         }
     );
+}
+
+// ============================================================
+// SPEEDTEST
+// ============================================================
+
+async function runSpeedtest() {
+
+    const result =
+        await sshExec(
+            `
+if command -v speedtest >/dev/null 2>&1; then
+    speedtest
+elif command -v speedtest-cli >/dev/null 2>&1; then
+    speedtest-cli --simple
+else
+    echo "SPEEDTEST_NOT_FOUND"
+fi
+`,
+            120000
+        );
+
+    return result.stdout.trim();
+}
+
+// ============================================================
+// TOP PROCESOS
+// ============================================================
+
+async function getTopProcesses() {
+
+    const result =
+        await sshExec(
+            'ps -eo pcpu,pmem,comm --sort=-pcpu | head -n 8',
+            10000
+        );
+
+    return result.stdout.trim();
+}
+
+// ============================================================
+// EJECUTAR REINICIO/APAGADO
+// ============================================================
+
+async function executeSystemAction(
+    chatId,
+    action
+) {
+
+    await bot.sendMessage(
+        chatId,
+        `⚠️ Ejecutando <b>${escapeTelegramHtml(action)}</b>...`,
+        {
+            parse_mode:
+                'HTML'
+        }
+    );
+
+    try {
+
+        await sshExec(
+            `sudo ${action}`,
+            5000
+        );
+
+    } catch (error) {
+
+        console.error(
+            '[SYSTEM ACTION]',
+            error.message
+        );
+
+        /*
+         * En reboot/poweroff es normal que SSH desaparezca
+         * antes de recibir la respuesta.
+         */
+    }
 }
 
 // ============================================================
@@ -2158,12 +2030,9 @@ bot.onText(
         ) {
 
             await bot.sendMessage(
-
                 chatId,
-
-                `🔐 <b>ACCESO AL PANEL</b>\n\n` +
+                `<b>🔐 ACCESO AL PANEL</b>\n\n` +
                 `Introduce la contraseña de invitado o administrador:`,
-
                 {
                     parse_mode:
                         'HTML'
@@ -2180,7 +2049,7 @@ bot.onText(
 );
 
 // ============================================================
-// MENSAJES
+// MENSAJES TELEGRAM
 // ============================================================
 
 bot.on(
@@ -2221,11 +2090,8 @@ bot.on(
                 };
 
                 await bot.sendMessage(
-
                     chatId,
-
-                    `🔓 <b>Acceso de administrador concedido.</b>`,
-
+                    `<b>🔓 Acceso de administrador concedido.</b>`,
                     {
                         parse_mode:
                             'HTML'
@@ -2249,11 +2115,8 @@ bot.on(
                 };
 
                 await bot.sendMessage(
-
                     chatId,
-
-                    `🔓 <b>Acceso de invitado concedido.</b>`,
-
+                    `<b>🔓 Acceso de invitado concedido.</b>`,
                     {
                         parse_mode:
                             'HTML'
@@ -2306,18 +2169,14 @@ bot.on(
                     tsChatSessions[chatId];
 
                 session.messages.push({
-
                     name:
                         'Tú',
-
-                    text:
-                        text
+                    text
                 });
 
                 if (
                     session.messages.length > 20
                 ) {
-
                     session.messages.shift();
                 }
 
@@ -2363,16 +2222,27 @@ bot.on(
         ).catch(() => {});
 
         // ====================================================
-        // HOME / PANEL
+        // HOME
         // ====================================================
 
         if (
             data === 'menu_home'
         ) {
 
-            await sendMainMenu(
-                chatId
-            );
+            try {
+
+                await sendMainMenu(
+                    chatId,
+                    messageId
+                );
+
+            } catch (error) {
+
+                console.error(
+                    '[MAIN MENU]',
+                    error.message
+                );
+            }
 
             return;
         }
@@ -2399,6 +2269,14 @@ bot.on(
                     error.message
                 );
 
+                /*
+                 * Solo mostramos este mensaje si el error es
+                 * realmente de la consulta a Pterodactyl.
+                 *
+                 * "message is not modified" se ignora dentro
+                 * de showServers().
+                 */
+
                 await bot.sendMessage(
                     chatId,
                     '🔴 No se pudo consultar Pterodactyl.'
@@ -2409,7 +2287,7 @@ bot.on(
         }
 
         // ====================================================
-        // TEAMSPEAK
+        // TEAMSPEAK USERS
         // ====================================================
 
         if (
@@ -2466,16 +2344,14 @@ bot.on(
 
                 await bot.editMessageText(
 
-                    `💬 <b>Conectando al chat de TeamSpeak...</b>\n\n` +
+                    `<b>💬 Conectando al chat de TeamSpeak...</b>\n\n` +
                     `⏳ Abriendo conexión en tiempo real...`,
 
                     {
                         chat_id:
                             chatId,
-
                         message_id:
                             messageId,
-
                         parse_mode:
                             'HTML'
                     }
@@ -2505,38 +2381,42 @@ bot.on(
                     chatId
                 );
 
-                await bot.editMessageText(
+                try {
 
-                    `🔴 <b>No se pudo conectar al chat de TeamSpeak.</b>\n\n` +
-                    `Comprueba que el puerto ${TS_PORT} esté accesible desde Northflank.`,
+                    await bot.editMessageText(
 
-                    {
-                        chat_id:
-                            chatId,
+                        `<b>🔴 No se pudo conectar al chat de TeamSpeak.</b>\n\n` +
+                        `Comprueba que el puerto ${TS_PORT} esté accesible desde Northflank.`,
 
-                        message_id:
-                            messageId,
-
-                        parse_mode:
-                            'HTML',
-
-                        reply_markup: {
-
-                            inline_keyboard: [
-
-                                [
-                                    {
-                                        text:
-                                            '◀️ Volver',
-
-                                        callback_data:
-                                            'menu_home'
-                                    }
+                        {
+                            chat_id:
+                                chatId,
+                            message_id:
+                                messageId,
+                            parse_mode:
+                                'HTML',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [
+                                        {
+                                            text:
+                                                '◀️ Volver',
+                                            callback_data:
+                                                'menu_home'
+                                        }
+                                    ]
                                 ]
-                            ]
+                            }
                         }
-                    }
-                );
+                    );
+
+                } catch (editError) {
+
+                    console.error(
+                        '[TS CHAT ERROR MESSAGE]',
+                        editError.message
+                    );
+                }
             }
 
             return;
@@ -2555,38 +2435,28 @@ bot.on(
             );
 
             await bot.editMessageText(
-
-                `💬 <b>Chat TeamSpeak cerrado.</b>`,
-
+                `<b>💬 Chat TeamSpeak cerrado.</b>`,
                 {
                     chat_id:
                         chatId,
-
                     message_id:
                         messageId,
-
                     parse_mode:
                         'HTML',
-
                     reply_markup: {
-
                         inline_keyboard: [
-
                             [
                                 {
                                     text:
                                         '💬 Volver a abrir',
-
                                     callback_data:
                                         'menu_chat'
                                 }
                             ],
-
                             [
                                 {
                                     text:
                                         '◀️ Menú',
-
                                     callback_data:
                                         'menu_home'
                                 }
@@ -2594,13 +2464,13 @@ bot.on(
                         ]
                     }
                 }
-            );
+            ).catch(() => {});
 
             return;
         }
 
         // ====================================================
-        // USUARIOS DESDE EL CHAT
+        // USUARIOS DESDE CHAT
         // ====================================================
 
         if (
@@ -2616,7 +2486,22 @@ bot.on(
         }
 
         // ====================================================
-        // ACCIONES SERVIDORES
+        // ACTUALIZAR USUARIOS
+        // ====================================================
+
+        if (
+            data === 'menu_ts_refresh'
+        ) {
+
+            await showTsUsers(
+                chatId
+            );
+
+            return;
+        }
+
+        // ====================================================
+        // ACCIONES PTERODACTYL
         // ====================================================
 
         if (
@@ -2644,13 +2529,19 @@ bot.on(
             const serverId =
                 parts[2];
 
+            // --------------------------------------------------
+            // STOP / RESTART
+            // --------------------------------------------------
+
             if (
                 action === 'stop' ||
                 action === 'restart'
             ) {
 
                 const users =
-                    await getTsUsers();
+                    await getTsUsers(
+                        chatId
+                    );
 
                 if (
                     users.length > 0
@@ -2659,23 +2550,16 @@ bot.on(
                     pendingActions[
                         chatId
                     ] = {
-
                         type:
                             'server',
-
                         action,
-
                         serverId,
-
                         users
                     };
 
                     const names =
                         users
-                            .slice(
-                                0,
-                                8
-                            )
+                            .slice(0, 8)
                             .map(
                                 user =>
                                     `• ${escapeTelegramHtml(user.nickname)}`
@@ -2686,7 +2570,7 @@ bot.on(
 
                         chatId,
 
-                        `⚠️ <b>HAY USUARIOS CONECTADOS</b>\n\n` +
+                        `<b>⚠️ HAY USUARIOS CONECTADOS</b>\n\n` +
                         `TeamSpeak tiene actualmente <b>${users.length}</b> usuario(s):\n\n` +
                         `${names}\n\n` +
                         `¿Quieres continuar con la operación?`,
@@ -2696,22 +2580,17 @@ bot.on(
                                 'HTML',
 
                             reply_markup: {
-
                                 inline_keyboard: [
-
                                     [
                                         {
                                             text:
                                                 '⚠️ Sí, continuar',
-
                                             callback_data:
                                                 'confirm_server'
                                         },
-
                                         {
                                             text:
                                                 '❌ Cancelar',
-
                                             callback_data:
                                                 'cancel_action'
                                         }
@@ -2736,18 +2615,16 @@ bot.on(
                 if (
                     !response.ok
                 ) {
-
                     throw new Error(
-                        `HTTP ${response.status}`
+                        `Pterodactyl HTTP ${response.status}`
                     );
                 }
 
                 await bot.sendMessage(
-
                     chatId,
-
-                    `✅ <b>${escapeTelegramHtml(action.toUpperCase())}</b> enviado correctamente.`,
-
+                    `✅ <b>${escapeTelegramHtml(
+                        action.toUpperCase()
+                    )}</b> enviado correctamente.`,
                     {
                         parse_mode:
                             'HTML'
@@ -2757,13 +2634,17 @@ bot.on(
             } catch (error) {
 
                 console.error(
-                    '[SERVER ACTION]',
+                    '[PTERODACTYL POWER]',
                     error.message
                 );
 
                 await bot.sendMessage(
                     chatId,
-                    '❌ Error al ejecutar la acción.'
+                    `❌ No se pudo ejecutar <b>${escapeTelegramHtml(action)}</b> en Pterodactyl.`,
+                    {
+                        parse_mode:
+                            'HTML'
+                    }
                 );
             }
 
@@ -2812,7 +2693,9 @@ bot.on(
                 if (
                     !response.ok
                 ) {
-                    throw new Error();
+                    throw new Error(
+                        `Pterodactyl HTTP ${response.status}`
+                    );
                 }
 
                 await bot.sendMessage(
@@ -2830,6 +2713,11 @@ bot.on(
                 );
 
             } catch (error) {
+
+                console.error(
+                    '[PTERODACTYL CONFIRM]',
+                    error.message
+                );
 
                 await bot.sendMessage(
                     chatId,
@@ -2861,6 +2749,125 @@ bot.on(
         }
 
         // ====================================================
+        // TOP PROCESOS
+        // ====================================================
+
+        if (
+            data === 'sys_top'
+        ) {
+
+            if (
+                !requireAdmin(chatId)
+            ) {
+                return;
+            }
+
+            try {
+
+                const result =
+                    await getTopProcesses();
+
+                await bot.sendMessage(
+                    chatId,
+                    `<b>🔥 TOP PROCESOS</b>\n\n` +
+                    `<pre>${escapeTelegramHtml(result)}</pre>`,
+                    {
+                        parse_mode:
+                            'HTML'
+                    }
+                );
+
+            } catch (error) {
+
+                console.error(
+                    '[TOP]',
+                    error.message
+                );
+
+                await bot.sendMessage(
+                    chatId,
+                    '❌ No se pudo obtener el top de procesos.'
+                );
+            }
+
+            return;
+        }
+
+        // ====================================================
+        // SPEEDTEST
+        // ====================================================
+
+        if (
+            data === 'sys_speedtest'
+        ) {
+
+            if (
+                !requireAdmin(chatId)
+            ) {
+                return;
+            }
+
+            const testing =
+                await bot.sendMessage(
+                    chatId,
+                    '🌐 Ejecutando Speedtest...\n⏳ Puede tardar un poco.'
+                );
+
+            try {
+
+                const result =
+                    await runSpeedtest();
+
+                if (
+                    result.includes(
+                        'SPEEDTEST_NOT_FOUND'
+                    )
+                ) {
+
+                    throw new Error(
+                        'No se encontró speedtest'
+                    );
+                }
+
+                await bot.editMessageText(
+
+                    `<b>🚀 SPEEDTEST</b>\n\n` +
+                    `<pre>${escapeTelegramHtml(result)}</pre>`,
+
+                    {
+                        chat_id:
+                            chatId,
+
+                        message_id:
+                            testing.message_id,
+
+                        parse_mode:
+                            'HTML'
+                    }
+                );
+
+            } catch (error) {
+
+                console.error(
+                    '[SPEEDTEST]',
+                    error.message
+                );
+
+                await bot.editMessageText(
+                    `❌ No se pudo ejecutar Speedtest.`,
+                    {
+                        chat_id:
+                            chatId,
+                        message_id:
+                            testing.message_id
+                    }
+                ).catch(() => {});
+            }
+
+            return;
+        }
+
+        // ====================================================
         // REBOOT / POWEROFF
         // ====================================================
 
@@ -2881,7 +2888,9 @@ bot.on(
                     : 'poweroff';
 
             const users =
-                await getTsUsers();
+                await getTsUsers(
+                    chatId
+                );
 
             if (
                 users.length > 0
@@ -2890,21 +2899,15 @@ bot.on(
                 pendingActions[
                     chatId
                 ] = {
-
                     type:
                         'system',
-
                     action,
-
                     users
                 };
 
                 const names =
                     users
-                        .slice(
-                            0,
-                            8
-                        )
+                        .slice(0, 8)
                         .map(
                             user =>
                                 `• ${escapeTelegramHtml(user.nickname)}`
@@ -2915,7 +2918,7 @@ bot.on(
 
                     chatId,
 
-                    `⚠️ <b>USUARIOS CONECTADOS A TEAMSPEAK</b>\n\n` +
+                    `<b>⚠️ USUARIOS CONECTADOS A TEAMSPEAK</b>\n\n` +
                     `${names}\n\n` +
                     `Hay <b>${users.length}</b> usuario(s) conectado(s).\n\n` +
                     `¿Seguro que quieres ${
@@ -2929,22 +2932,17 @@ bot.on(
                             'HTML',
 
                         reply_markup: {
-
                             inline_keyboard: [
-
                                 [
                                     {
                                         text:
                                             '⚠️ Continuar',
-
                                         callback_data:
                                             'confirm_system'
                                     },
-
                                     {
                                         text:
                                             '❌ Cancelar',
-
                                         callback_data:
                                             'cancel_action'
                                     }
@@ -3004,49 +3002,7 @@ bot.on(
 );
 
 // ============================================================
-// REBOOT / POWEROFF
-// ============================================================
-
-async function executeSystemAction(
-    chatId,
-    action
-) {
-
-    await bot.sendMessage(
-
-        chatId,
-
-        `⚠️ Ejecutando <b>${escapeTelegramHtml(action)}</b>...`,
-
-        {
-            parse_mode:
-                'HTML'
-        }
-    );
-
-    try {
-
-        await sshExec(
-            `sudo ${action}`,
-            5000
-        );
-
-    } catch (error) {
-
-        /*
-         * Puede ocurrir que la máquina se apague/reinicie
-         * antes de que SSH pueda devolver una respuesta.
-         */
-
-        console.error(
-            '[SYSTEM ACTION]',
-            error.message
-        );
-    }
-}
-
-// ============================================================
-// AVISO DE ARRANQUE
+// MENSAJE DE ARRANQUE
 // ============================================================
 
 async function sendStartupMessage() {
@@ -3061,43 +3017,32 @@ async function sendStartupMessage() {
     const hw =
         await getHardwareStats();
 
-    const cpu =
-        hw.cpu !== 'N/D'
-            ? `🌡️ CPU: <b>${escapeTelegramHtml(hw.cpu)}°C</b>`
-            : `🌡️ CPU: <b>N/D</b>`;
-
-    const gpu =
-        hw.gpu !== 'N/D'
-            ? `🎮 GPU: <b>${escapeTelegramHtml(hw.gpu)}°C</b>`
-            : `🎮 GPU: <b>N/D</b>`;
-
-    const ram =
-        hw.ramP !== 'N/D'
-            ? `🧠 RAM: <b>${escapeTelegramHtml(hw.ramP)}%</b>`
-            : `🧠 RAM: <b>N/D</b>`;
-
-    const ping =
-        hw.ping !== 'N/D'
-            ? `📡 Ping: <b>${escapeTelegramHtml(hw.ping)} ms</b>`
-            : `📡 Ping: <b>N/D</b>`;
+    const tsOnline =
+        await isTeamSpeakOnline();
 
     const text =
         `<b>✅ SISTEMA ONLINE</b>\n` +
-        `━━━━━━━━━━━━━━━━━━━━\n` +
-        `${cpu}\n` +
-        `${gpu}\n` +
-        `${ram}\n` +
-        `${ping}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n\n` +
+
+        `🌡️ CPU: <b>${escapeTelegramHtml(hw.cpu)}°C</b>\n` +
+        `🎮 GPU: <b>${escapeTelegramHtml(hw.gpu)}°C</b>\n` +
+        `🧠 RAM: <b>${escapeTelegramHtml(hw.ramP)}%</b>\n` +
+        `📡 Ping: <b>${escapeTelegramHtml(hw.ping)} ms</b>\n` +
+        `💾 Disco: <b>${escapeTelegramHtml(hw.diskP)}%</b>\n\n` +
+
+        `🎙️ TeamSpeak: <b>${
+            tsOnline
+                ? 'ONLINE'
+                : 'OFFLINE'
+        }</b>\n\n` +
+
         `🤖 El bot de monitorización está operativo.`;
 
     try {
 
         await bot.sendMessage(
-
             chatId,
-
             text,
-
             {
                 parse_mode:
                     'HTML'
@@ -3107,14 +3052,14 @@ async function sendStartupMessage() {
     } catch (error) {
 
         console.error(
-            '[STARTUP MESSAGE]',
+            '[STARTUP]',
             error.message
         );
     }
 }
 
 // ============================================================
-// ERRORES TELEGRAM
+// ERRORES
 // ============================================================
 
 bot.on(
@@ -3127,10 +3072,6 @@ bot.on(
         );
     }
 );
-
-// ============================================================
-// ERRORES GLOBAL
-// ============================================================
 
 process.on(
     'unhandledRejection',
@@ -3168,9 +3109,8 @@ console.log(
 
 sendStartupMessage()
     .catch(error => {
-
         console.error(
-            '[STARTUP]',
+            '[STARTUP MESSAGE]',
             error.message
         );
     });
